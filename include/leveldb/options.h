@@ -79,6 +79,7 @@ struct LEVELDB_EXPORT Options {
   // so you may wish to adjust this parameter to control memory usage.
   // Also, a larger write buffer will result in a longer recovery time
   // the next time the database is opened.
+  // 内存memtable的大小，
   size_t write_buffer_size = 4 * 1024 * 1024;
 
   // Number of open files that can be used by the DB.  You may need to
@@ -139,6 +140,7 @@ struct LEVELDB_EXPORT Options {
   // If non-null, use the specified filter policy to reduce disk reads.
   // Many applications will benefit from passing the result of
   // NewBloomFilterPolicy() here.
+  // block快中的过滤策略，支持布隆过滤器。
   const FilterPolicy* filter_policy = nullptr;
 };
 
@@ -152,6 +154,7 @@ struct LEVELDB_EXPORT ReadOptions {
 
   // Should the data read for this iteration be cached in memory?
   // Callers may wish to set this field to false for bulk scans.
+  //从迭代器中读到的block是否加入到cache中。
   bool fill_cache = true;
 
   // If "snapshot" is non-null, read as of the supplied snapshot
@@ -179,6 +182,7 @@ struct LEVELDB_EXPORT WriteOptions {
   // crash semantics as the "write()" system call.  A DB write
   // with sync==true has similar crash semantics to a "write()"
   // system call followed by "fsync()".
+  // 是否同步刷盘，就是说调用完write之后是否需要显示调用fsync()；
   bool sync = false;
 };
 

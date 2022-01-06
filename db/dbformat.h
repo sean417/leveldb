@@ -22,15 +22,19 @@ namespace leveldb {
 // Grouping of constants.  We may want to make some of these
 // parameters set via options.
 namespace config {
+//磁盘上最大的level个数，默认是7
 static const int kNumLevels = 7;
 
 // Level-0 compaction is started when we hit this many files.
+// 第零层到多少个文件的时候触发压缩，默认是4
 static const int kL0_CompactionTrigger = 4;
 
 // Soft limit on number of level-0 files.  We slow down writes at this point.
+// 第零层到多少个文件的时候触发延迟写，为了把cpu交给压缩线程会延迟写1ms，因为第0层文件太多的话会造成查询成本升高，默认是8个文件。
 static const int kL0_SlowdownWritesTrigger = 8;
 
 // Maximum number of level-0 files.  We stop writes at this point.
+// 第零层到多少个文件的时候触发停止写，默认是12个文件。
 static const int kL0_StopWritesTrigger = 12;
 
 // Maximum level to which a new compacted memtable is pushed if it
