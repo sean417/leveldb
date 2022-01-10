@@ -232,6 +232,7 @@ class InMemoryEnv : public EnvWrapper {
   Status NewSequentialFile(const std::string& fname,
                            SequentialFile** result) override {
     MutexLock lock(&mutex_);
+    //这里使用了Env的部分功能，所以根据场景可以自己继承EnvWrapper
     if (file_map_.find(fname) == file_map_.end()) {
       *result = nullptr;
       return Status::IOError(fname, "File not found");

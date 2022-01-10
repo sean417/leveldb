@@ -39,10 +39,12 @@ char* Arena::AllocateAligned(size_t bytes) {
   const int align = (sizeof(void*) > 8) ? sizeof(void*) : 8;
   static_assert((align & (align - 1)) == 0,
                 "Pointer size should be a power of 2");
+  //
   size_t current_mod = reinterpret_cast<uintptr_t>(alloc_ptr_) & (align - 1);
   size_t slop = (current_mod == 0 ? 0 : align - current_mod);
   size_t needed = bytes + slop;
   char* result;
+  //补齐操作
   if (needed <= alloc_bytes_remaining_) {
     result = alloc_ptr_ + slop;
     alloc_ptr_ += needed;

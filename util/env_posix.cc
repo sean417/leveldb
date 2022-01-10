@@ -55,7 +55,7 @@ constexpr const int kOpenBaseFlags = O_CLOEXEC;
 #else
 constexpr const int kOpenBaseFlags = 0;
 #endif  // defined(HAVE_O_CLOEXEC)
-
+//默认缓冲区的大小 64k
 constexpr const size_t kWritableFileBufferSize = 65536;
 
 Status PosixError(const std::string& context, int error_number) {
@@ -169,7 +169,7 @@ class PosixSequentialFile final : public SequentialFile {
 };
 
 // Implements random read access in a file using pread().
-//
+// 实现了随机读的RandomAccessFile。
 // Instances of this class are thread-safe, as required by the RandomAccessFile
 // API. Instances are immutable and Read() only calls thread-safe library
 // functions.
@@ -195,7 +195,7 @@ class PosixRandomAccessFile final : public RandomAccessFile {
       fd_limiter_->Release();
     }
   }
-
+  //打开文件
   Status Read(uint64_t offset, size_t n, Slice* result,
               char* scratch) const override {
     int fd = fd_;
@@ -209,6 +209,11 @@ class PosixRandomAccessFile final : public RandomAccessFile {
     assert(fd != -1);
 
     Status status;
+
+    //pread()方法的解释：
+    //如果我们要读10个字节，要调用read(),然后要通过调用lseek()把指针往后移动10个字节，这样下次才能
+    //读到新的数据。但是如何保证read()和lseek()的原子性呢？通过调用pread()就可以了。
+
     ssize_t read_size = ::pread(fd, scratch, n, static_cast<off_t>(offset));
     *result = Slice(scratch, (read_size < 0) ? 0 : read_size);
     if (read_size < 0) {
@@ -224,14 +229,19 @@ class PosixRandomAccessFile final : public RandomAccessFile {
   }
 
  private:
-  const bool has_permanent_fd_;  // If false, the file is opened on every read.
-  const int fd_;                 // -1 if has_permanent_fd_ is false.
-  Limiter* const fd_limiter_;
+  const bool has_permanent_fd_;  // If false, the file is opened on every read.是否每次都要打开文件。
+  const int fd_;                 // -1 if has_permanent_fd_ is false.  fd
+  Limiter* const fd_limiter_;    // fd资源限制相关。
   const std::string filename_;
 };
 
 // Implements random read access in a file using mmap().
-//
+// 通过 MMAP 实现了随机读的 RandomAccessFile。
+// MMAP是从调用进程的虚拟地址空间中创建磁盘文件的映射。
+// MMAP减少了一次数据拷贝：
+// 正常拷贝是：磁盘数据--》linux内核的缓存--》用户进程的缓存。
+// MMAP的拷贝是：磁盘数据--》用户进程的缓存。对应拷贝来说是减少了一次拷贝，对应拷贝频率来说，
+// 是linux的定时任务去触发刷盘的,这样能大大减少拷贝的频率。
 // Instances of this class are thread-safe, as required by the RandomAccessFile
 // API. Instances are immutable and Read() only calls thread-safe library
 // functions.
@@ -252,6 +262,7 @@ class PosixMmapReadableFile final : public RandomAccessFile {
         filename_(std::move(filename)) {}
 
   ~PosixMmapReadableFile() override {
+    //munmap是和mmap()相反的操作，即从调用进程的虚拟地址空间中删除映射。
     ::munmap(static_cast<void*>(mmap_base_), length_);
     mmap_limiter_->Release();
   }
@@ -274,6 +285,7 @@ class PosixMmapReadableFile final : public RandomAccessFile {
   const std::string filename_;
 };
 
+//linux环境的WritableFile实现
 class PosixWritableFile final : public WritableFile {
  public:
   PosixWritableFile(std::string filename, int fd)
@@ -289,8 +301,9 @@ class PosixWritableFile final : public WritableFile {
       Close();
     }
   }
-
+  //顺序写操作
   Status Append(const Slice& data) override {
+    //先把数据写到buffer中
     size_t write_size = data.size();
     const char* write_data = data.data();
 
@@ -300,22 +313,29 @@ class PosixWritableFile final : public WritableFile {
     write_data += copy_size;
     write_size -= copy_size;
     pos_ += copy_size;
+    //数据都写到buffer中后就返回
     if (write_size == 0) {
       return Status::OK();
     }
 
+
+
     // Can't fit in buffer, so need to do at least one write.
+    // buffer如果装不下就把buffer刷到磁盘上。
     Status status = FlushBuffer();
     if (!status.ok()) {
       return status;
     }
 
     // Small writes go to buffer, large writes are written directly.
+    // 刷到磁盘后buffer就空了，这时如果数据比buffer小
+    // 就直接存到buffer中，
     if (write_size < kWritableFileBufferSize) {
       std::memcpy(buf_, write_data, write_size);
       pos_ = write_size;
       return Status::OK();
     }
+    //否则继续刷盘
     return WriteUnbuffered(write_data, write_size);
   }
 
@@ -356,8 +376,9 @@ class PosixWritableFile final : public WritableFile {
     pos_ = 0;
     return status;
   }
-
+  //写入没有刷到buffer的数据
   Status WriteUnbuffered(const char* data, size_t size) {
+    //循环调用直到所有的字节写完
     while (size > 0) {
       ssize_t write_result = ::write(fd_, data, size);
       if (write_result < 0) {
@@ -455,6 +476,7 @@ class PosixWritableFile final : public WritableFile {
   }
 
   // buf_[0, pos_ - 1] contains data to be written to fd_.
+  //linux上顺序写的缓冲区,缓冲区大小为 64k。
   char buf_[kWritableFileBufferSize];
   size_t pos_;
   int fd_;
@@ -464,6 +486,8 @@ class PosixWritableFile final : public WritableFile {
   const std::string dirname_;  // The directory of filename_.
 };
 
+//真正的文件锁，因为只要保证一个进程访问就可以了，
+//所以用 flock 来排就可以了。flock支持字节区的上锁，就是更细。
 int LockOrUnlock(int fd, bool lock) {
   errno = 0;
   struct ::flock file_lock_info;
@@ -476,6 +500,8 @@ int LockOrUnlock(int fd, bool lock) {
 }
 
 // Instances are thread-safe because they are immutable.
+// 为了防止一个文件访问的不安全，这里要定义一个文件锁，
+// 文件锁涉及到文件的fd和文件名，为了方便把他们打包成一个对象而已
 class PosixFileLock : public FileLock {
  public:
   PosixFileLock(int fd, std::string filename)
@@ -490,7 +516,7 @@ class PosixFileLock : public FileLock {
 };
 
 // Tracks the files locked by PosixEnv::LockFile().
-//
+// 追踪上过锁的文件，目的是防止重复拿到锁。
 // We maintain a separate set instead of relying on fcntl(F_SETLK) because
 // fcntl(F_SETLK) does not provide any protection against multiple uses from the
 // same process.
@@ -500,6 +526,8 @@ class PosixLockTable {
  public:
   bool Insert(const std::string& fname) LOCKS_EXCLUDED(mu_) {
     mu_.Lock();
+    //如果已经有了，set集合会返回false,
+    //也就是说文件已经别锁了，不要再尝试访问了
     bool succeeded = locked_files_.insert(fname).second;
     mu_.Unlock();
     return succeeded;
@@ -512,6 +540,7 @@ class PosixLockTable {
 
  private:
   port::Mutex mu_;
+  //这个set集合保存了所有的上锁的文件
   std::set<std::string> locked_files_ GUARDED_BY(mu_);
 };
 
@@ -652,20 +681,20 @@ class PosixEnv : public Env {
     }
     return Status::OK();
   }
-
+  //打开文件并上文件锁。
   Status LockFile(const std::string& filename, FileLock** lock) override {
     *lock = nullptr;
-
+    //打开文件并拿到fd
     int fd = ::open(filename.c_str(), O_RDWR | O_CREAT | kOpenBaseFlags, 0644);
     if (fd < 0) {
       return PosixError(filename, errno);
     }
-
+    //只要文件上了锁，就不会给你第二次访问的机会
     if (!locks_.Insert(filename)) {
       ::close(fd);
       return Status::IOError("lock " + filename, "already held by process");
     }
-
+    //记录文件的fd和name
     if (LockOrUnlock(fd, true) == -1) {
       int lock_errno = errno;
       ::close(fd);
@@ -678,6 +707,8 @@ class PosixEnv : public Env {
   }
 
   Status UnlockFile(FileLock* lock) override {
+
+    //解锁的时候可以通过PosixFileLock很方便的把fd(文件描述符)和name拿回来。
     PosixFileLock* posix_file_lock = static_cast<PosixFileLock*>(lock);
     if (LockOrUnlock(posix_file_lock->fd(), false) == -1) {
       return PosixError("unlock " + posix_file_lock->filename(), errno);
@@ -811,6 +842,7 @@ PosixEnv::PosixEnv()
       mmap_limiter_(MaxMmaps()),
       fd_limiter_(MaxOpenFiles()) {}
 
+//线程池
 void PosixEnv::Schedule(
     void (*background_work_function)(void* background_work_arg),
     void* background_work_arg) {
@@ -819,6 +851,7 @@ void PosixEnv::Schedule(
   // Start the background thread, if we haven't done so already.
   if (!started_background_thread_) {
     started_background_thread_ = true;
+    //BackgroundThreadEntryPoint：回调函数
     std::thread background_thread(PosixEnv::BackgroundThreadEntryPoint, this);
     background_thread.detach();
   }
@@ -837,11 +870,13 @@ void PosixEnv::BackgroundThreadMain() {
     background_work_mutex_.Lock();
 
     // Wait until there is work to be done.
+    // 如果队列为空就等待。
     while (background_work_queue_.empty()) {
       background_work_cv_.Wait();
     }
 
     assert(!background_work_queue_.empty());
+    //
     auto background_work_function = background_work_queue_.front().function;
     void* background_work_arg = background_work_queue_.front().arg;
     background_work_queue_.pop();
@@ -903,7 +938,7 @@ class SingletonEnv {
 template <typename EnvType>
 std::atomic<bool> SingletonEnv<EnvType>::env_initialized_;
 #endif  // !defined(NDEBUG)
-
+//默认的Env实现
 using PosixDefaultEnv = SingletonEnv<PosixEnv>;
 
 }  // namespace

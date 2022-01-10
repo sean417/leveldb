@@ -24,7 +24,7 @@ namespace leveldb {
 class PosixLogger final : public Logger {
  public:
   // Creates a logger that writes to the given file.
-  //
+  // 优先使用栈内存，不够再去使用堆内存
   // The PosixLogger instance takes ownership of the file handle.
   explicit PosixLogger(std::FILE* fp) : fp_(fp) { assert(fp != nullptr); }
 
@@ -49,6 +49,7 @@ class PosixLogger final : public Logger {
 
     // We first attempt to print into a stack-allocated buffer. If this attempt
     // fails, we make a second attempt with a dynamically allocated buffer.
+    // 我们首先尝试打印到栈缓冲区里。如果尝试失败，我们就尝试动态分配buffer(堆上分配)
     constexpr const int kStackBufferSize = 512;
     char stack_buffer[kStackBufferSize];
     static_assert(sizeof(stack_buffer) == static_cast<size_t>(kStackBufferSize),
@@ -56,6 +57,7 @@ class PosixLogger final : public Logger {
 
     int dynamic_buffer_size = 0;  // Computed in the first iteration.
     for (int iteration = 0; iteration < 2; ++iteration) {
+      //先尝试直接使用分配的栈对象
       const int buffer_size =
           (iteration == 0) ? kStackBufferSize : dynamic_buffer_size;
       char* const buffer =

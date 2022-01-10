@@ -55,6 +55,7 @@ class InternalKey;
 // Value types encoded as the last component of internal keys.
 // DO NOT CHANGE THESE ENUM VALUES: they are embedded in the on-disk
 // data structures.
+// kTypeDeletion表示删除操作，kTypeValue表示put操作。
 enum ValueType { kTypeDeletion = 0x0, kTypeValue = 0x1 };
 // kValueTypeForSeek defines the ValueType that should be passed when
 // constructing a ParsedInternalKey object for seeking to a particular
@@ -62,15 +63,18 @@ enum ValueType { kTypeDeletion = 0x0, kTypeValue = 0x1 };
 // and the value type is embedded as the low 8 bits in the sequence
 // number in internal keys, we need to use the highest-numbered
 // ValueType, not the lowest).
+// kValueTypeForSeek是一种sequence number，用来区分相同key数据的版本，也就是操作的新旧。
 static const ValueType kValueTypeForSeek = kTypeValue;
 
 typedef uint64_t SequenceNumber;
 
 // We leave eight bits empty at the bottom so a type and sequence#
 // can be packed together into 64-bits.
+// 一个递增的uint64整数，相同key则按照其降序，7个字节存放真正的Sequence，最后一个字节存type
 static const SequenceNumber kMaxSequenceNumber = ((0x1ull << 56) - 1);
-
+//对InternalKey的解析，InternalKey是把数据序列化之后放在一个string里面的，需要解析
 struct ParsedInternalKey {
+  //用户定义的key,如redis你要查name为James的值，就
   Slice user_key;
   SequenceNumber sequence;
   ValueType type;
@@ -171,20 +175,25 @@ inline int InternalKeyComparator::Compare(const InternalKey& a,
                                           const InternalKey& b) const {
   return Compare(a.Encode(), b.Encode());
 }
-
+// InternalKey转ParseInternalKey
 inline bool ParseInternalKey(const Slice& internal_key,
                              ParsedInternalKey* result) {
+  //总字节数
   const size_t n = internal_key.size();
   if (n < 8) return false;
   uint64_t num = DecodeFixed64(internal_key.data() + n - 8);
+  //反编译出后8个字节数据，
+  //进行位运算计算出seq和type
   uint8_t c = num & 0xff;
   result->sequence = num >> 8;
   result->type = static_cast<ValueType>(c);
+  //前n-8个字节就是具体的user_key
   result->user_key = Slice(internal_key.data(), n - 8);
   return (c <= static_cast<uint8_t>(kTypeValue));
 }
 
 // A helper class useful for DBImpl::Get()
+// 在查找中使用的key,包含的数据最全，包含user_key,internal_key,memtable_key。
 class LookupKey {
  public:
   // Initialize *this for looking up user_key at a snapshot with
@@ -216,6 +225,9 @@ class LookupKey {
   const char* start_;
   const char* kstart_;
   const char* end_;
+  // 在栈上分配内存要比堆上分配的快，小对象直接使用栈上的内存，
+  // 不用在堆上动态申请空间，避免了申请堆空间所需要的开销，这样能提升性能。
+  // 类似C++ 里 string的sso优化。
   char space_[200];  // Avoid allocation for short keys
 };
 

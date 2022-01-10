@@ -74,7 +74,7 @@ class LEVELDB_EXPORT WriteBatch {
 
  private:
   friend class WriteBatchInternal;
-
+  //WriteBatch的具体数据
   std::string rep_;  // See comment in write_batch.cc for the format of rep_
 };
 

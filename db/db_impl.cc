@@ -1218,6 +1218,7 @@ Status DBImpl::Write(const WriteOptions& options, WriteBatch* updates) {
   Writer* last_writer = &w;
   if (status.ok() && updates != nullptr) {  // nullptr batch is for compactions
     WriteBatch* write_batch = BuildBatchGroup(&last_writer);
+    //
     WriteBatchInternal::SetSequence(write_batch, last_sequence + 1);
     last_sequence += WriteBatchInternal::Count(write_batch);
 
@@ -1229,6 +1230,7 @@ Status DBImpl::Write(const WriteOptions& options, WriteBatch* updates) {
       mutex_.Unlock();
       status = log_->AddRecord(WriteBatchInternal::Contents(write_batch));
       bool sync_error = false;
+      //写完缓存后立即调用Sync()写到磁盘上。
       if (status.ok() && options.sync) {
         status = logfile_->Sync();
         if (!status.ok()) {
@@ -1359,6 +1361,7 @@ Status DBImpl::MakeRoomForWrite(bool force) {
       background_work_finished_signal_.Wait();
     } else {
       // Attempt to switch to a new memtable and trigger compaction of old
+      // 当wal log日志的大小到4M的时候就转换为SST，SST是排序表，按照key就行排序的。
       assert(versions_->PrevLogNumber() == 0);
       uint64_t new_log_number = versions_->NewFileNumber();
       WritableFile* lfile = nullptr;
@@ -1368,6 +1371,8 @@ Status DBImpl::MakeRoomForWrite(bool force) {
         versions_->ReuseFileNumber(new_log_number);
         break;
       }
+      //到这里就说明已经到4M了，同时更新创建一个新的日志文件。
+      //并新建一个MemTable。
       delete log_;
       delete logfile_;
       logfile_ = lfile;
@@ -1479,7 +1484,7 @@ Status DB::Delete(const WriteOptions& opt, const Slice& key) {
 }
 
 DB::~DB() = default;
-
+//数据库打开
 Status DB::Open(const Options& options, const std::string& dbname, DB** dbptr) {
   *dbptr = nullptr;
 
@@ -1510,6 +1515,7 @@ Status DB::Open(const Options& options, const std::string& dbname, DB** dbptr) {
     s = impl->versions_->LogAndApply(&edit, &impl->mutex_);
   }
   if (s.ok()) {
+    //删除没有用的WAL日志文件
     impl->RemoveObsoleteFiles();
     impl->MaybeScheduleCompaction();
   }

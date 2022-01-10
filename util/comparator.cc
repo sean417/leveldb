@@ -33,16 +33,20 @@ class BytewiseComparatorImpl : public Comparator {
     // Find length of common prefix
     size_t min_length = std::min(start->size(), limit.size());
     size_t diff_index = 0;
+    //去除两个字段的公共部分。
     while ((diff_index < min_length) &&
            ((*start)[diff_index] == limit[diff_index])) {
       diff_index++;
     }
-
+    //如果为true说明，两个字段不同的指针比最小长度还大，也就是说一个字符串是另一个字符串的子串。
+    //同时不用比了
     if (diff_index >= min_length) {
       // Do not shorten if one string is a prefix of the other
     } else {
+      //否则我们继续比
       uint8_t diff_byte = static_cast<uint8_t>((*start)[diff_index]);
       if (diff_byte < static_cast<uint8_t>(0xff) &&
+          //这里是最短最近的字符串
           diff_byte + 1 < static_cast<uint8_t>(limit[diff_index])) {
         (*start)[diff_index]++;
         start->resize(diff_index + 1);

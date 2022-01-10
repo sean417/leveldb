@@ -21,6 +21,8 @@ class LEVELDB_EXPORT Comparator {
  public:
   virtual ~Comparator();
 
+  //
+  // 支持三种操作，大于、等于，小于
   // Three-way comparison.  Returns value:
   //   < 0 iff "a" < "b",
   //   == 0 iff "a" == "b",
@@ -45,6 +47,7 @@ class LEVELDB_EXPORT Comparator {
   // If *start < limit, changes *start to a short string in [start,limit).
   // Simple comparator implementations may return with *start unchanged,
   // i.e., an implementation of this method that does nothing is correct.
+  // 通过分隔符找到最近的字符串
   virtual void FindShortestSeparator(std::string* start,
                                      const Slice& limit) const = 0;
 
@@ -54,6 +57,8 @@ class LEVELDB_EXPORT Comparator {
   virtual void FindShortSuccessor(std::string* key) const = 0;
 };
 
+//
+// 按字典序比较
 // Return a builtin comparator that uses lexicographic byte-wise
 // ordering.  The result remains the property of this module and
 // must not be deleted.

@@ -90,6 +90,7 @@ void MemTable::Add(SequenceNumber s, ValueType type, const Slice& key,
   char* p = EncodeVarint32(buf, internal_key_size);
   std::memcpy(p, key.data(), key_size);
   p += key_size;
+  //左移8位留一个字节充当type
   EncodeFixed64(p, (s << 8) | type);
   p += 8;
   p = EncodeVarint32(p, val_size);

@@ -219,6 +219,7 @@ class LEVELDB_EXPORT Env {
 };
 
 // A file abstraction for reading sequentially through a file
+// 对于顺序读一个文件的文件抽象。
 class LEVELDB_EXPORT SequentialFile {
  public:
   SequentialFile() = default;
@@ -249,6 +250,7 @@ class LEVELDB_EXPORT SequentialFile {
 };
 
 // A file abstraction for randomly reading the contents of a file.
+// 随机读文件内容的文件抽象
 class LEVELDB_EXPORT RandomAccessFile {
  public:
   RandomAccessFile() = default;
@@ -274,6 +276,9 @@ class LEVELDB_EXPORT RandomAccessFile {
 // A file abstraction for sequential writing.  The implementation
 // must provide buffering since callers may append small fragments
 // at a time to the file.
+// 对顺序写文件的一个抽象。这个时序必须提供缓冲区因为
+// 调用方也许在一个时间向某个文件追加几个小碎片。
+// 纯虚类
 class LEVELDB_EXPORT WritableFile {
  public:
   WritableFile() = default;
@@ -332,6 +337,7 @@ LEVELDB_EXPORT Status ReadFileToString(Env* env, const std::string& fname,
 // An implementation of Env that forwards all calls to another Env.
 // May be useful to clients who wish to override just part of the
 // functionality of another Env.
+//EnvWrapper是对Env的一个扩展
 class LEVELDB_EXPORT EnvWrapper : public Env {
  public:
   // Initialize an EnvWrapper that delegates all calls to *t.

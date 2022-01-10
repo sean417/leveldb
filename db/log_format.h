@@ -9,6 +9,7 @@
 #define STORAGE_LEVELDB_DB_LOG_FORMAT_H_
 
 namespace leveldb {
+//WAL日志
 namespace log {
 
 enum RecordType {
@@ -23,9 +24,9 @@ enum RecordType {
   kLastType = 4
 };
 static const int kMaxRecordType = kLastType;
-
+//WAL日志一个block文件大小32M
 static const int kBlockSize = 32768;
-
+//WAL日志一个header的大小
 // Header is checksum (4 bytes), length (2 bytes), type (1 byte).
 static const int kHeaderSize = 4 + 2 + 1;
 
