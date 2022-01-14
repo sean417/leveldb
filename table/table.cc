@@ -34,21 +34,28 @@ struct Table::Rep {
   BlockHandle metaindex_handle;  // Handle to metaindex_block: saved from footer
   Block* index_block;
 };
-
+// 打开一个sst的操作。打开一个sst和写一个sst的逻辑是反的。
+// 写一个sst是先写Data Block然后再写File Footer，然后
+// 再根据得到的元数据解析Data Block
+// 
 Status Table::Open(const Options& options, RandomAccessFile* file,
                    uint64_t size, Table** table) {
   *table = nullptr;
+  //footer部分就是48个字节，如果整个sst文件小于48个字节，那么肯定是不正常的
   if (size < Footer::kEncodedLength) {
     return Status::Corruption("file is too short to be an sstable");
   }
 
   char footer_space[Footer::kEncodedLength];
   Slice footer_input;
+  //因为Footer位于文件末尾，所以减去Footer本身的长度，
+  //然后再开始读取Footer具体内容，这也是为啥Footer是定长的，便于区分文件内容而已
   Status s = file->Read(size - Footer::kEncodedLength, Footer::kEncodedLength,
                         &footer_input, footer_space);
   if (!s.ok()) return s;
 
   Footer footer;
+  //解码，反序列化
   s = footer.DecodeFrom(&footer_input);
   if (!s.ok()) return s;
 

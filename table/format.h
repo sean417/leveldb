@@ -20,9 +20,11 @@ struct ReadOptions;
 
 // BlockHandle is a pointer to the extent of a file that stores a data
 // block or a meta block.
+// BlockHandle封装了offset和size的偏移量。另外这个offset是累加的，
 class BlockHandle {
  public:
   // Maximum encoding length of a BlockHandle
+  // 两个变长的成员变量的最大长度分别是10，所以是20.
   enum { kMaxEncodedLength = 10 + 10 };
 
   BlockHandle();
@@ -39,26 +41,32 @@ class BlockHandle {
   Status DecodeFrom(Slice* input);
 
  private:
-  uint64_t offset_;
-  uint64_t size_;
+  // 变长的成员变量，offset_，和size_。
+  // 每个变量最大长度是10个字节。也就是说BlockHandle最大20个字节
+  uint64_t offset_;//offset_：表示block的偏移量。
+  uint64_t size_;//size_：表示block的大小。
 };
 
 // Footer encapsulates the fixed information stored at the tail
 // end of every table file.
+// 48个字节，
 class Footer {
  public:
   // Encoded length of a Footer.  Note that the serialization of a
   // Footer will always occupy exactly this many bytes.  It consists
   // of two block handles and a magic number.
+  // 最大长度48个字节
   enum { kEncodedLength = 2 * BlockHandle::kMaxEncodedLength + 8 };
 
   Footer() = default;
 
   // The block handle for the metaindex block of the table
+  // 指向meta block
   const BlockHandle& metaindex_handle() const { return metaindex_handle_; }
   void set_metaindex_handle(const BlockHandle& h) { metaindex_handle_ = h; }
 
   // The block handle for the index block of the table
+  // 指向 data index block
   const BlockHandle& index_handle() const { return index_handle_; }
   void set_index_handle(const BlockHandle& h) { index_handle_ = h; }
 

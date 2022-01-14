@@ -40,17 +40,20 @@ void Footer::EncodeTo(std::string* dst) const {
 }
 
 Status Footer::DecodeFrom(Slice* input) {
+  //先解析低位的魔数，因为是小端存储，所以低位先解析出来。
   const char* magic_ptr = input->data() + kEncodedLength - 8;
   const uint32_t magic_lo = DecodeFixed32(magic_ptr);
   const uint32_t magic_hi = DecodeFixed32(magic_ptr + 4);
   const uint64_t magic = ((static_cast<uint64_t>(magic_hi) << 32) |
                           (static_cast<uint64_t>(magic_lo)));
+  //魔数不匹配，就返回解析失败。                        
   if (magic != kTableMagicNumber) {
     return Status::Corruption("not an sstable (bad magic number)");
   }
-
+  //解析metaindex的偏移量和大小
   Status result = metaindex_handle_.DecodeFrom(input);
   if (result.ok()) {
+    //解析index的偏移量和大小，都是参数都是input,不要奇怪，DecodeFrom内会更新input通过slice()根据下标切input。
     result = index_handle_.DecodeFrom(input);
   }
   if (result.ok()) {
@@ -60,7 +63,8 @@ Status Footer::DecodeFrom(Slice* input) {
   }
   return result;
 }
-
+//读取数据，先读到index block中的数据所在的偏移量，然后根据offset和保存的data block所对应数据大小
+//(不包括最后的crc32和compresstype)
 Status ReadBlock(RandomAccessFile* file, const ReadOptions& options,
                  const BlockHandle& handle, BlockContents* result) {
   result->data = Slice();

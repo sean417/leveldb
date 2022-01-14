@@ -32,6 +32,8 @@ struct TableBuilder::Rep {
                          ? nullptr
                          : new FilterBlockBuilder(opt.filter_policy)),
         pending_index_entry(false) {
+        //block_restart_interval = 1: index block数据少不需要任何压缩，
+        //所以block_restart_interval = 1
     index_block_options.block_restart_interval = 1;
   }
 
@@ -65,6 +67,7 @@ struct TableBuilder::Rep {
 TableBuilder::TableBuilder(const Options& options, WritableFile* file)
     : rep_(new Rep(options, file)) {
   if (rep_->filter_block != nullptr) {
+    //sst文件才开始，所以偏移量是0
     rep_->filter_block->StartBlock(0);
   }
 }
@@ -91,6 +94,7 @@ Status TableBuilder::ChangeOptions(const Options& options) {
   return Status::OK();
 }
 
+//数据写入流程：例如把immemtable（不可变的内存数据表）中的数据dump下来
 void TableBuilder::Add(const Slice& key, const Slice& value) {
   Rep* r = rep_;
   assert(!r->closed);
@@ -98,25 +102,32 @@ void TableBuilder::Add(const Slice& key, const Slice& value) {
   if (r->num_entries > 0) {
     assert(r->options.comparator->Compare(key, Slice(r->last_key)) > 0);
   }
-
+  //表示上一个数据block刚刷新到磁盘。说明这是新的block的第一个record,要保存到index_block里。
+  //而flush()会把pending_index_entry改为true，这样flush()后的新block的第一个record的处理是
+  //构建上一个block的index entry的时机
   if (r->pending_index_entry) {
     assert(r->data_block.empty());
+    //找到最短距离最近的key存储下来，所以不一定是原始的key
     r->options.comparator->FindShortestSeparator(&r->last_key, key);
     std::string handle_encoding;
+    //作为index的部分。
     r->pending_handle.EncodeTo(&handle_encoding);
+    //保存到index block里。构建上一个block的index entry的时机,所以用last_key
     r->index_block.Add(r->last_key, Slice(handle_encoding));
     r->pending_index_entry = false;
   }
-
+  //data block写一个key,filter block也要写一个key。
   if (r->filter_block != nullptr) {
     r->filter_block->AddKey(key);
   }
-
+  //把
   r->last_key.assign(key.data(), key.size());
   r->num_entries++;
+  //将key和value写入data block中
   r->data_block.Add(key, value);
-
+  //每个datablock有4k的限制
   const size_t estimated_block_size = r->data_block.CurrentSizeEstimate();
+  //如果超过4k的限制就要把数据刷新到磁盘，并且开启新的block
   if (estimated_block_size >= r->options.block_size) {
     Flush();
   }
@@ -128,11 +139,14 @@ void TableBuilder::Flush() {
   if (!ok()) return;
   if (r->data_block.empty()) return;
   assert(!r->pending_index_entry);
+  //写block。
   WriteBlock(&r->data_block, &r->pending_handle);
   if (ok()) {
     r->pending_index_entry = true;
+    //刷新到磁盘上
     r->status = r->file->Flush();
   }
+  //filter_block随之也会更新新的block
   if (r->filter_block != nullptr) {
     r->filter_block->StartBlock(r->offset);
   }
@@ -169,23 +183,28 @@ void TableBuilder::WriteBlock(BlockBuilder* block, BlockHandle* handle) {
       break;
     }
   }
+  //追加，刷盘
   WriteRawBlock(block_contents, type, handle);
   r->compressed_output.clear();
+  //写完后，重置
   block->Reset();
 }
 
 void TableBuilder::WriteRawBlock(const Slice& block_contents,
                                  CompressionType type, BlockHandle* handle) {
   Rep* r = rep_;
+  //保存偏移量
   handle->set_offset(r->offset);
-  handle->set_size(block_contents.size());
+  handle->set_size(block_contents.size());// 不包括crc32和compressType,因为rc32和compressType都是固定大小，要想获取骗字节就行了。
   r->status = r->file->Append(block_contents);
   if (r->status.ok()) {
     char trailer[kBlockTrailerSize];
     trailer[0] = type;
+    //生成crc
     uint32_t crc = crc32c::Value(block_contents.data(), block_contents.size());
     crc = crc32c::Extend(crc, trailer, 1);  // Extend crc to cover block type
     EncodeFixed32(trailer + 1, crc32c::Mask(crc));
+    //刷盘
     r->status = r->file->Append(Slice(trailer, kBlockTrailerSize));
     if (r->status.ok()) {
       r->offset += block_contents.size() + kBlockTrailerSize;
@@ -194,17 +213,19 @@ void TableBuilder::WriteRawBlock(const Slice& block_contents,
 }
 
 Status TableBuilder::status() const { return rep_->status; }
-
+//构造并写footer
 Status TableBuilder::Finish() {
   Rep* r = rep_;
+  //
   Flush();
   assert(!r->closed);
   r->closed = true;
-
+  //三种BlockHandle
   BlockHandle filter_block_handle, metaindex_block_handle, index_block_handle;
 
   // Write filter block
   if (ok() && r->filter_block != nullptr) {
+    //调用filter_block的Finish()来写filter block
     WriteRawBlock(r->filter_block->Finish(), kNoCompression,
                   &filter_block_handle);
   }
@@ -217,6 +238,7 @@ Status TableBuilder::Finish() {
       std::string key = "filter.";
       key.append(r->options.filter_policy->Name());
       std::string handle_encoding;
+      //filter_block_handle所在的offset和文件大小，通过这个可以找到上述的filterBlock对象
       filter_block_handle.EncodeTo(&handle_encoding);
       meta_index_block.Add(key, handle_encoding);
     }
@@ -225,11 +247,12 @@ Status TableBuilder::Finish() {
     WriteBlock(&meta_index_block, &metaindex_block_handle);
   }
 
-  // Write index block
+  // Write index block,最后一次构造最后一个block在index_block上对应的entry。
   if (ok()) {
     if (r->pending_index_entry) {
       r->options.comparator->FindShortSuccessor(&r->last_key);
       std::string handle_encoding;
+      //
       r->pending_handle.EncodeTo(&handle_encoding);
       r->index_block.Add(r->last_key, Slice(handle_encoding));
       r->pending_index_entry = false;
@@ -238,14 +261,19 @@ Status TableBuilder::Finish() {
   }
 
   // Write footer
+  // 写footer。
   if (ok()) {
     Footer footer;
+    //写入对应的handle
     footer.set_metaindex_handle(metaindex_block_handle);
     footer.set_index_handle(index_block_handle);
     std::string footer_encoding;
+    //编码，就是序列化
     footer.EncodeTo(&footer_encoding);
+    //追加到文件的最后
     r->status = r->file->Append(footer_encoding);
     if (r->status.ok()) {
+      //累加偏移量offset。
       r->offset += footer_encoding.size();
     }
   }

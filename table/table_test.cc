@@ -173,6 +173,8 @@ class Constructor {
   KVMap data_;
 };
 
+
+//构建block的test,blockbuilder的例子
 class BlockConstructor : public Constructor {
  public:
   explicit BlockConstructor(const Comparator* cmp)
@@ -181,9 +183,11 @@ class BlockConstructor : public Constructor {
   Status FinishImpl(const Options& options, const KVMap& data) override {
     delete block_;
     block_ = nullptr;
+    //设置参数
     BlockBuilder builder(&options);
 
     for (const auto& kvp : data) {
+      //真正的添加数据
       builder.Add(kvp.first, kvp.second);
     }
     // Open the block

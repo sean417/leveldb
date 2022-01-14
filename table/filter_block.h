@@ -41,14 +41,18 @@ class FilterBlockBuilder {
  private:
   void GenerateFilter();
 
-  const FilterPolicy* policy_;
+  const FilterPolicy* policy_; //过滤器策略：默认是布隆过滤器
   std::string keys_;             // Flattened key contents
   std::vector<size_t> start_;    // Starting index in keys_ of each key
-  std::string result_;           // Filter data computed so far
+  //1.布隆过滤器的二进制数据，构建的filter二进制数据。
+  //2.每2k数据构建一个布隆过滤器,所以可能存在多个filter，并且都保存在result_里。
+  std::string result_;           // Filter data computed so far 
+  //1.每2k数据构建一个布隆过滤器,所以可能存在多个filter，而该变量记录的是filter的偏移量。
+  //2.
   std::vector<Slice> tmp_keys_;  // policy_->CreateFilter() argument
   std::vector<uint32_t> filter_offsets_;
 };
-
+//读取FilterBlock的类
 class FilterBlockReader {
  public:
   // REQUIRES: "contents" and *policy must stay live while *this is live.
@@ -56,7 +60,7 @@ class FilterBlockReader {
   bool KeyMayMatch(uint64_t block_offset, const Slice& key);
 
  private:
-  const FilterPolicy* policy_;
+  const FilterPolicy* policy_;//过滤器策略：默认是布隆过滤器
   const char* data_;    // Pointer to filter data (at block-start)
   const char* offset_;  // Pointer to beginning of offset array (at block-end)
   size_t num_;          // Number of entries in offset array

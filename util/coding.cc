@@ -134,10 +134,12 @@ const char* GetVarint64Ptr(const char* p, const char* limit, uint64_t* value) {
 bool GetVarint64(Slice* input, uint64_t* value) {
   const char* p = input->data();
   const char* limit = p + input->size();
+  //对input的下标做更新。
   const char* q = GetVarint64Ptr(p, limit, value);
   if (q == nullptr) {
     return false;
   } else {
+    //对input的下标做更新。input变了
     *input = Slice(q, limit - q);
     return true;
   }

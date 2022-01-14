@@ -43,7 +43,7 @@ class FilterBlockTest : public testing::Test {
 
 TEST_F(FilterBlockTest, EmptyBuilder) {
   FilterBlockBuilder builder(&policy_);
-  Slice block = builder.Finish();
+  Slice block = builder.Finish();//filter0,filter1,filter2;filter offset0,filter offset1,filter offset2;num;logBaseg
   ASSERT_EQ("\\x00\\x00\\x00\\x00\\x0b", EscapeString(block));
   FilterBlockReader reader(&policy_, block);
   ASSERT_TRUE(reader.KeyMayMatch(0, "foo"));
