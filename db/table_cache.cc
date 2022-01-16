@@ -12,12 +12,13 @@
 namespace leveldb {
 
 struct TableAndFile {
-  RandomAccessFile* file;
-  Table* table;
+  RandomAccessFile* file;//句柄。
+  Table* table;//Table类对象的引用。
 };
-
+//缓存淘汰时，需要关闭句柄，也就是执行DeleteEntry回调函数。
 static void DeleteEntry(const Slice& key, void* value) {
   TableAndFile* tf = reinterpret_cast<TableAndFile*>(value);
+  //一级级的释放，否则会内存泄漏
   delete tf->table;
   delete tf->file;
   delete tf;
@@ -44,7 +45,9 @@ Status TableCache::FindTable(uint64_t file_number, uint64_t file_size,
   char buf[sizeof(file_number)];
   EncodeFixed64(buf, file_number);
   Slice key(buf, sizeof(buf));
+  //cache中寻找sst
   *handle = cache_->Lookup(key);
+  //如果缓冲中没有这个sst的句柄，就到磁盘读.
   if (*handle == nullptr) {
     std::string fname = TableFileName(dbname_, file_number);
     RandomAccessFile* file = nullptr;
@@ -57,6 +60,7 @@ Status TableCache::FindTable(uint64_t file_number, uint64_t file_size,
       }
     }
     if (s.ok()) {
+      //从磁盘读文件
       s = Table::Open(options_, file, file_size, &table);
     }
 
@@ -66,9 +70,11 @@ Status TableCache::FindTable(uint64_t file_number, uint64_t file_size,
       // We do not cache error results so that if the error is transient,
       // or somebody repairs the file, we recover automatically.
     } else {
+      //读到后插到缓存里。
       TableAndFile* tf = new TableAndFile;
       tf->file = file;
       tf->table = table;
+      //插到缓存里。
       *handle = cache_->Insert(key, tf, 1, &DeleteEntry);
     }
   }
@@ -96,16 +102,20 @@ Iterator* TableCache::NewIterator(const ReadOptions& options,
   }
   return result;
 }
-
+//TableCache的查询
 Status TableCache::Get(const ReadOptions& options, uint64_t file_number,
                        uint64_t file_size, const Slice& k, void* arg,
                        void (*handle_result)(void*, const Slice&,
                                              const Slice&)) {
   Cache::Handle* handle = nullptr;
+  //1. 找table:1)先到table_cache缓存找。2）找不到到磁盘找，找到后放缓存
   Status s = FindTable(file_number, file_size, &handle);
   if (s.ok()) {
+    //2.按到table的句柄t
     Table* t = reinterpret_cast<TableAndFile*>(cache_->Value(handle))->table;
+    //3.在table里面去找数据：1)先到block_cache缓存找。
     s = t->InternalGet(options, k, arg, handle_result);
+    //释放指向cache的句柄handle，不然cache一直有引用就无法释放cache了，最终导致内存的飙升。
     cache_->Release(handle);
   }
   return s;

@@ -106,6 +106,7 @@ FilterBlockReader::FilterBlockReader(const FilterPolicy* policy,
   //num_表示总共有几个filter offset,也就是有多少个filter
   num_ = (n - 5 - last_word) / 4;
 }
+//判断key是否在对应的布隆过滤器里
 //KeyMayMatch对应的是反解析出对应的数据，然后进行bf判断。
 bool FilterBlockReader::KeyMayMatch(uint64_t block_offset, const Slice& key) {
   uint64_t index = block_offset >> base_lg_;

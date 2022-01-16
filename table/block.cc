@@ -21,7 +21,11 @@ inline uint32_t Block::NumRestarts() const {
   assert(size_ >= sizeof(uint32_t));
   return DecodeFixed32(data_ + size_ - sizeof(uint32_t));
 }
-
+/*
+  block的作用：
+  1.保存BlockContents转换后的数据，存储在cache中。
+  2.由于sst中存储的block都在多个item(类似一个vector),因此需要一个迭代器来遍历。
+*/
 Block::Block(const BlockContents& contents)
     : data_(contents.data.data()),
       size_(contents.data.size()),
@@ -29,11 +33,15 @@ Block::Block(const BlockContents& contents)
   if (size_ < sizeof(uint32_t)) {
     size_ = 0;  // Error marker
   } else {
+    // 最后一个保存的是restart总个数，因此最多保留的 restart 个数（剩余所有的都是restarts offset）
+    
     size_t max_restarts_allowed = (size_ - sizeof(uint32_t)) / sizeof(uint32_t);
+    // 与restarts中restart的个数相比较。
     if (NumRestarts() > max_restarts_allowed) {
       // The size is too small for NumRestarts()
       size_ = 0;
     } else {
+      //反解析出数据部分的长度。
       restart_offset_ = size_ - (1 + NumRestarts()) * sizeof(uint32_t);
     }
   }
@@ -161,7 +169,7 @@ class Block::Iter : public Iterator {
       // Loop until end of current entry hits the start of original entry
     } while (ParseNextKey() && NextEntryOffset() < original);
   }
-
+  //二分查找指定的key.
   void Seek(const Slice& target) override {
     // Binary search in restart array to find the last restart point
     // with a key < target
@@ -184,11 +192,13 @@ class Block::Iter : public Iterator {
         return;
       }
     }
-
+    // 二分查找法
     while (left < right) {
       uint32_t mid = (left + right + 1) / 2;
+      // 获取对应的重启点的位置
       uint32_t region_offset = GetRestartPoint(mid);
       uint32_t shared, non_shared, value_length;
+      // 解析出来的是非共享部分
       const char* key_ptr =
           DecodeEntry(data_ + region_offset, data_ + restarts_, &shared,
                       &non_shared, &value_length);
@@ -197,6 +207,7 @@ class Block::Iter : public Iterator {
         return;
       }
       Slice mid_key(key_ptr, non_shared);
+      //比较两个key的大小
       if (Compare(mid_key, target) < 0) {
         // Key at "mid" is smaller than "target".  Therefore all
         // blocks before "mid" are uninteresting.
@@ -207,15 +218,19 @@ class Block::Iter : public Iterator {
         right = mid - 1;
       }
     }
-
+    
     // We might be able to use our current position within the restart block.
     // This is true if we determined the key we desire is in the current block
     // and is after than the current key.
     assert(current_key_compare == 0 || Valid());
     bool skip_seek = left == restart_index_ && current_key_compare < 0;
     if (!skip_seek) {
+      /*
+       定位到重启点
+      */
       SeekToRestartPoint(left);
     }
+    // 从当前的重启点开始
     // Linear search (within restart block) for first key >= target
     while (true) {
       if (!ParseNextKey()) {
@@ -286,6 +301,7 @@ Iterator* Block::NewIterator(const Comparator* comparator) {
   if (num_restarts == 0) {
     return NewEmptyIterator();
   } else {
+    //data_, restart_offset_, num_restarts 在构造block的时候这些参数都解析出来了。
     return new Iter(comparator, data_, restart_offset_, num_restarts);
   }
 }
