@@ -160,6 +160,8 @@ class SpecialEnv : public EnvWrapper {
         return base_->Sync();
       }
     };
+    
+    //Manifest文件可以看作是VersionEdit的日志，为了快速恢复需要将这些变更持久化到磁盘上。
     class ManifestFile : public WritableFile {
      private:
       SpecialEnv* env_;

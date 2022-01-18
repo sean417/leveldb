@@ -49,6 +49,7 @@ Status TableCache::FindTable(uint64_t file_number, uint64_t file_size,
   *handle = cache_->Lookup(key);
   //如果缓冲中没有这个sst的句柄，就到磁盘读.
   if (*handle == nullptr) {
+    //构造table的名字
     std::string fname = TableFileName(dbname_, file_number);
     RandomAccessFile* file = nullptr;
     Table* table = nullptr;

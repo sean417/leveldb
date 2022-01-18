@@ -5,13 +5,16 @@
 // The representation of a DBImpl consists of a set of Versions.  The
 // newest version is called "current".  Older versions may be kept
 // around to provide a consistent view to live iterators.
+// 最新
+//
 //
 // Each Version keeps track of a set of Table files per level.  The
 // entire set of versions is maintained in a VersionSet.
+// 每个 version 会一直跟踪每个level的sst文件列表集合。version 集合维持在一个VersionSet里。
 //
 // Version,VersionSet are thread-compatible, but require external
 // synchronization on all accesses.
-
+// leveldb采用MVCC多版本管理的，MVCC多版本管理是由 version_set 实现的。version_set是一个双向链表。
 #ifndef STORAGE_LEVELDB_DB_VERSION_SET_H_
 #define STORAGE_LEVELDB_DB_VERSION_SET_H_
 
@@ -132,9 +135,9 @@ class Version {
 
   Version(const Version&) = delete;
   Version& operator=(const Version&) = delete;
-
+ //删除当前版本中引用计数为0的version
   ~Version();
-
+  //创建两层迭代器
   Iterator* NewConcatenatingIterator(const ReadOptions&, int level) const;
 
   // Call func(arg, level, f) for every file that overlaps user_key in
@@ -145,25 +148,25 @@ class Version {
   void ForEachOverlapping(Slice user_key, Slice internal_key, void* arg,
                           bool (*func)(void*, int, FileMetaData*));
 
-  VersionSet* vset_;  // VersionSet to which this Version belongs
-  Version* next_;     // Next version in linked list
-  Version* prev_;     // Previous version in linked list
-  int refs_;          // Number of live refs to this version
+  VersionSet* vset_;  // VersionSet to which this Version belongs 隶属于哪个versionset
+  Version* next_;     // Next version in linked list 
+  Version* prev_;     // Previous version in linked list 
+  int refs_;          // Number of live refs to this version 当前有多少服务还引用这这个版本。
 
-  // List of files per level
-  std::vector<FileMetaData*> files_[config::kNumLevels];
+  // List of files per level vector数组。每一个元素表示：每一层的sst文件列表。每一层用一个vector<FileMetaData*>表示。
+  std::vector<FileMetaData*> files_[config::kNumLevels];//当前版本的所有数据。元素为vector<FileMetaData*>的数组，数组长度为kNumLevels=7，即七层sst文件
 
   // Next file to compact based on seek stats.
-  FileMetaData* file_to_compact_;
-  int file_to_compact_level_;
+  FileMetaData* file_to_compact_;//用于seek次数超过阈值之后需要压缩的文件.
+  int file_to_compact_level_;//用于seek次数超过阈值后需要压缩的文件所在的level.
 
   // Level that should be compacted next and its compaction score.
   // Score < 1 means compaction is not strictly needed.  These fields
   // are initialized by Finalize().
-  double compaction_score_;
-  int compaction_level_;
+  double compaction_score_;//用于检查size超过阈值之后需要压缩的文件
+  int compaction_level_;//用于检查size超过阈值之后需要压缩的文件所在的level
 };
-
+//Version是双向链表VersionSet里的Node。
 class VersionSet {
  public:
   VersionSet(const std::string& dbname, const Options* options,

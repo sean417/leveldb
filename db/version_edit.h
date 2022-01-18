@@ -14,18 +14,24 @@
 namespace leveldb {
 
 class VersionSet;
-
+//每个sst文件的元数据
 struct FileMetaData {
   FileMetaData() : refs(0), allowed_seeks(1 << 30), file_size(0) {}
 
-  int refs;
-  int allowed_seeks;  // Seeks allowed until compaction
-  uint64_t number;
-  uint64_t file_size;    // File size in bytes
-  InternalKey smallest;  // Smallest internal key served by table
-  InternalKey largest;   // Largest internal key served by table
+  int refs;  //这个sst的引用数
+  int allowed_seeks;  // Seeks allowed until compaction 用于基于seek compaction
+  uint64_t number;    //唯一标识一个sstable
+  uint64_t file_size;    // File size in bytes 文件大小
+  InternalKey smallest;  // Smallest internal key served by table 最小的key
+  InternalKey largest;   // Largest internal key served by table  最大的key.
 };
-
+/*
+  mvcc的概念，在leveldb中则使用versionedit来记录每次变更。
+  因此，数据库正常/非正常关闭重新打开后，只需要按顺序把 MANIFEST 文件中的 VersionEdit 执行一遍，
+  就可以把数据恢复到宕机前的最新版本(内存中的数据持久化由 WAL 文件保证，所以 WAL 文件+sstables 文件，
+  就可以保证数据不会丢失)。
+  VersionEdit是放在内存里面的。
+*/
 class VersionEdit {
  public:
   VersionEdit() { Clear(); }
@@ -84,7 +90,7 @@ class VersionEdit {
   friend class VersionSet;
 
   typedef std::set<std::pair<int, uint64_t>> DeletedFileSet;
-
+  
   std::string comparator_;
   uint64_t log_number_;
   uint64_t prev_log_number_;

@@ -64,6 +64,7 @@ class SkipList {
    public:
     // Initialize an iterator over the specified list.
     // The returned iterator is not valid.
+    // 
     explicit Iterator(const SkipList* list);
 
     // Returns true iff the iterator is positioned at a valid node.

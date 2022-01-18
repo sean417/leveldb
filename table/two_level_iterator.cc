@@ -78,11 +78,15 @@ TwoLevelIterator::TwoLevelIterator(Iterator* index_iter,
       data_iter_(nullptr) {}
 
 TwoLevelIterator::~TwoLevelIterator() = default;
-
+// target是我们输入的key,
 void TwoLevelIterator::Seek(const Slice& target) {
+  //一级索引找到target在从哪个sst文件开始查找
   index_iter_.Seek(target);
+  //初始化data_block，创建第二级迭代器
   InitDataBlock();
+  //二级索引中查找数据，在一级索引中已经创建了二级索引，直接在二级索引查找key就可以了
   if (data_iter_.iter() != nullptr) data_iter_.Seek(target);
+  //跳过背后为空的data_block索引
   SkipEmptyDataBlocksForward();
 }
 
@@ -114,11 +118,12 @@ void TwoLevelIterator::Prev() {
 
 void TwoLevelIterator::SkipEmptyDataBlocksForward() {
   while (data_iter_.iter() == nullptr || !data_iter_.Valid()) {
-    // Move to next block
+    // 移动到下一个block.Move to next block
     if (!index_iter_.Valid()) {
       SetDataIterator(nullptr);
       return;
     }
+    // 移动到下一个 一级索引index_iter 所对应的二级索引。
     index_iter_.Next();
     InitDataBlock();
     if (data_iter_.iter() != nullptr) data_iter_.SeekToFirst();
@@ -144,24 +149,31 @@ void TwoLevelIterator::SetDataIterator(Iterator* data_iter) {
 }
 
 void TwoLevelIterator::InitDataBlock() {
+  // 最外层都显示无效了，内部也直接设置无效。
   if (!index_iter_.Valid()) {
     SetDataIterator(nullptr);
   } else {
+    // 否则取出内部的值。
+    // LevelFileNumIterator对应的value是文件编号和文件的大小
     Slice handle = index_iter_.value();
+    // 第一次为null，走下面的分支，如果一级索引对应下的二级索引已经构建，那就不需要再构建了
     if (data_iter_.iter() != nullptr &&
         handle.compare(data_block_handle_) == 0) {
       // data_iter_ is already constructed with this iterator, so
       // no need to change anything
     } else {
+      //构建二级迭代。 回调函数是 table_cache->NewIterator。
       Iterator* iter = (*block_function_)(arg_, options_, handle);
       data_block_handle_.assign(handle.data(), handle.size());
+      //设置二级索引的值
       SetDataIterator(iter);
     }
   }
 }
 
 }  // namespace
-
+//第一级是 index_iter
+//第二级是 block_function 回调函数
 Iterator* NewTwoLevelIterator(Iterator* index_iter,
                               BlockFunction block_function, void* arg,
                               const ReadOptions& options) {
