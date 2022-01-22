@@ -27,11 +27,13 @@ class MergingIterator : public Iterator {
   ~MergingIterator() override { delete[] children_; }
 
   bool Valid() const override { return (current_ != nullptr); }
-
+  //找到第一个
   void SeekToFirst() override {
     for (int i = 0; i < n_; i++) {
+      //所有都归零
       children_[i].SeekToFirst();
     }
+    //找到最小的
     FindSmallest();
     direction_ = kForward;
   }
@@ -139,9 +141,12 @@ class MergingIterator : public Iterator {
   // For now we use a simple array since we expect a very small number
   // of children in leveldb.
   const Comparator* comparator_;
+  //为了防止迭代器太多，所以直接在对堆上分配
   IteratorWrapper* children_;
   int n_;
+  //当前有效的迭代器，因为有多个，所以需要实时记录当前所用的
   IteratorWrapper* current_;
+  //表示迭代方向
   Direction direction_;
 };
 
@@ -175,7 +180,7 @@ void MergingIterator::FindLargest() {
   current_ = largest;
 }
 }  // namespace
-
+//用于合并多个SST文件的迭代器
 Iterator* NewMergingIterator(const Comparator* comparator, Iterator** children,
                              int n) {
   assert(n >= 0);

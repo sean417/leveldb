@@ -167,6 +167,7 @@ class Version {
   int compaction_level_;//用于检查size超过阈值之后需要压缩的文件所在的level
 };
 //Version是双向链表VersionSet里的Node。
+//函数功能：压缩，
 class VersionSet {
  public:
   VersionSet(const std::string& dbname, const Options* options,
@@ -181,24 +182,29 @@ class VersionSet {
   // current version.  Will release *mu while actually writing to the file.
   // REQUIRES: *mu is held on entry.
   // REQUIRES: no other thread concurrently calls LogAndApply()
+  // 将edit应用到当前版本，生成新版本，并将当前状态进行持久化
+  // 其中在持久化时候不需要加锁。
   Status LogAndApply(VersionEdit* edit, port::Mutex* mu)
       EXCLUSIVE_LOCKS_REQUIRED(mu);
 
   // Recover the last saved descriptor from persistent storage.
+  // 从持久化的状态恢复（打开db时候会调用这个函数。）
   Status Recover(bool* save_manifest);
 
-  // Return the current version.
+  // Return the current version.当前版本。
   Version* current() const { return current_; }
 
-  // Return the current manifest file number
+  // Return the current manifest file number 获取manifest文件编号。
   uint64_t ManifestFileNumber() const { return manifest_file_number_; }
 
   // Allocate and return a new file number
+  // 分配并返回全局新的文件编号，该编号从manifest读取并且初始化的。
   uint64_t NewFileNumber() { return next_file_number_++; }
 
   // Arrange to reuse "file_number" unless a newer file number has
   // already been allocated.
   // REQUIRES: "file_number" was returned by a call to NewFileNumber().
+  // 重用FileNum,比如说manifest
   void ReuseFileNumber(uint64_t file_number) {
     if (next_file_number_ == file_number + 1) {
       next_file_number_ = file_number;
@@ -206,24 +212,30 @@ class VersionSet {
   }
 
   // Return the number of Table files at the specified level.
+  // 某一层文件总个数
   int NumLevelFiles(int level) const;
 
   // Return the combined file size of all files at the specified level.
+  // 某一层文件总字节
   int64_t NumLevelBytes(int level) const;
 
   // Return the last sequence number.
+  // 返回当前最大的seq
   uint64_t LastSequence() const { return last_sequence_; }
 
   // Set the last sequence number to s.
+  // 设置最大的seq
   void SetLastSequence(uint64_t s) {
     assert(s >= last_sequence_);
     last_sequence_ = s;
   }
 
   // Mark the specified file number as used.
+  // 标记number已经被使用
   void MarkFileNumberUsed(uint64_t number);
 
   // Return the current log file number.
+  // 获取当前日志编号
   uint64_t LogNumber() const { return log_number_; }
 
   // Return the log file number for the log file that is currently
@@ -234,24 +246,28 @@ class VersionSet {
   // Returns nullptr if there is no compaction to be done.
   // Otherwise returns a pointer to a heap-allocated object that
   // describes the compaction.  Caller should delete the result.
+  // 选择要压缩的level及文件
   Compaction* PickCompaction();
 
   // Return a compaction object for compacting the range [begin,end] in
   // the specified level.  Returns nullptr if there is nothing in that
   // level that overlaps the specified range.  Caller should delete
   // the result.
+  // 返回在level层，【begin,end]范围内可以压缩的文件。
   Compaction* CompactRange(int level, const InternalKey* begin,
                            const InternalKey* end);
 
   // Return the maximum overlapping data (in bytes) at next level for any
-  // file at a level >= 1.
+  // file at a level >= 1.获取level+1层重叠部分的字节数
   int64_t MaxNextLevelOverlappingBytes();
 
   // Create an iterator that reads over the compaction inputs for "*c".
   // The caller should delete the iterator when no longer needed.
+  // 为参与归并压缩的文件创建一个迭代器
   Iterator* MakeInputIterator(Compaction* c);
 
   // Returns true iff some level needs a compaction.
+  // 判断是否需要压缩（size/seek触发）
   bool NeedsCompaction() const {
     Version* v = current_;
     return (v->compaction_score_ >= 1) || (v->file_to_compact_ != nullptr);
@@ -264,9 +280,10 @@ class VersionSet {
   // Return the approximate offset in the database of the data for
   // "key" as of version "v".
   uint64_t ApproximateOffsetOf(Version* v, const InternalKey& key);
-
+  
   // Return a human-readable short (single-line) summary of the number
   // of files per level.  Uses *scratch as backing store.
+  // 每一行一个level文件元数据，主要是文件的大小
   struct LevelSummaryStorage {
     char buffer[100];
   };
@@ -277,23 +294,24 @@ class VersionSet {
 
   friend class Compaction;
   friend class Version;
-
+  //复用manifest文件
   bool ReuseManifest(const std::string& dscname, const std::string& dscbase);
-
+  //收尾工作，计算下一次需要压缩文件
   void Finalize(Version* v);
-
+  //获取给定input范围的最大值和最小值
   void GetRange(const std::vector<FileMetaData*>& inputs, InternalKey* smallest,
                 InternalKey* largest);
 
   void GetRange2(const std::vector<FileMetaData*>& inputs1,
                  const std::vector<FileMetaData*>& inputs2,
                  InternalKey* smallest, InternalKey* largest);
-
+  // 压缩时，选择level+1层的sst文件
   void SetupOtherInputs(Compaction* c);
 
-  // Save current contents to *log
+  // Save current contents to *log 当前版本的内容写入日志manifest。
   Status WriteSnapshot(log::Writer* log);
 
+  //将新版本追加到versionset中，并更新current。
   void AppendVersion(Version* v);
 
   Env* const env_;
@@ -301,21 +319,21 @@ class VersionSet {
   const Options* const options_;
   TableCache* const table_cache_;
   const InternalKeyComparator icmp_;
-  uint64_t next_file_number_;
-  uint64_t manifest_file_number_;
-  uint64_t last_sequence_;
-  uint64_t log_number_;
+  uint64_t next_file_number_;//下一个文件编号
+  uint64_t manifest_file_number_;//manifest文件编号
+  uint64_t last_sequence_;//最后一个seq_num
+  uint64_t log_number_;//记录当前日志编号
   uint64_t prev_log_number_;  // 0 or backing store for memtable being compacted
 
   // Opened lazily
-  WritableFile* descriptor_file_;
-  log::Writer* descriptor_log_;
-  Version dummy_versions_;  // Head of circular doubly-linked list of versions.
-  Version* current_;        // == dummy_versions_.prev_
+  WritableFile* descriptor_file_;//用于写manifest文件
+  log::Writer* descriptor_log_;//用于写manifest文件，其中log格式和wal保持一致
+  Version dummy_versions_;  // Head of circular doubly-linked list of versions.固定指向双向链表的head，而且其pre指向最新current。
+  Version* current_;        // == dummy_versions_.prev_指向最新的版本
 
   // Per-level key at which the next compaction at that level should start.
   // Either an empty string, or a valid InternalKey.
-  std::string compact_pointer_[config::kNumLevels];
+  std::string compact_pointer_[config::kNumLevels];//记录每一层在下一次需要压缩的largest key(InternalKey)。该值取自versionedit
 };
 
 // A Compaction encapsulates information about a compaction.
@@ -365,20 +383,27 @@ class Compaction {
   friend class VersionSet;
 
   Compaction(const Options* options, int level);
-
+  //需要压缩的level。
   int level_;
+  //压缩之后最大的文件大小，等于options->max_file-size。
   uint64_t max_output_file_size_;
+  //当前需要操作的版本
   Version* input_version_;
+  //版本变化
   VersionEdit edit_;
 
   // Each compaction reads inputs from "level_" and "level_+1"
+  // level和level+1层参与压缩的文件集合
   std::vector<FileMetaData*> inputs_[2];  // The two sets of inputs
 
   // State used to check for number of overlapping grandparent files
   // (parent == level_ + 1, grandparent == level_ + 2)
+  // grandparents元数据
   std::vector<FileMetaData*> grandparents_;
+  // grandparents下表索引
   size_t grandparent_index_;  // Index in grandparent_starts_
   bool seen_key_;             // Some output key has been seen
+  // 当前压缩与grandparent files重叠的字节数
   int64_t overlapped_bytes_;  // Bytes of overlap between current output
                               // and grandparent files
 
@@ -388,6 +413,7 @@ class Compaction {
   // is that we are positioned at one of the file ranges for each
   // higher level than the ones involved in this compaction (i.e. for
   // all L >= level_ + 2).
+  // 用于记录某个user_key与>=level+2中每一层不重叠的文件个数
   size_t level_ptrs_[config::kNumLevels];
 };
 

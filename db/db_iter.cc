@@ -288,7 +288,7 @@ void DBIter::Seek(const Slice& target) {
     valid_ = false;
   }
 }
-
+//找到第一个
 void DBIter::SeekToFirst() {
   direction_ = kForward;
   ClearSavedValue();
