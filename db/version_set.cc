@@ -1661,17 +1661,26 @@ Compaction::~Compaction() {
     input_version_->Unref();
   }
 }
-
+//表示本次是否可以将本次SST直接移动到上一层，level层的文件直接move到level+1层。
 bool Compaction::IsTrivialMove() const {
   const VersionSet* vset = input_version_->vset_;
   // Avoid a move if there is lots of overlapping grandparent data.
   // Otherwise, the move could create a parent file that will require
   // a very expensive merge later on.
+  // 1. level层和level+1层压缩文件的key范围没有重叠。
+  // 2. level层和grandparents_压缩文件重叠度小于阈值（避免后面到level+1层时候和level+2层重叠度太大，
+  // 避免level+1层和level+2层压缩时会付出很高的压缩成本）.
+  // 3.level层必须只有一个文件，level+1层没有文件
   return (num_input_files(0) == 1 && num_input_files(1) == 0 &&
           TotalFileSize(grandparents_) <=
               MaxGrandParentOverlapBytes(vset->options_));
 }
+/*将所有需要删除SST文件添加到*edit。
+ （每次压缩后，都会出现一些新文件和删除一些老文件，这些变化会保存在versionEdit里面，）
 
+
+
+*/
 void Compaction::AddInputDeletions(VersionEdit* edit) {
   for (int which = 0; which < 2; which++) {
     for (size_t i = 0; i < inputs_[which].size(); i++) {
@@ -1679,7 +1688,8 @@ void Compaction::AddInputDeletions(VersionEdit* edit) {
     }
   }
 }
-
+// 判断当前user_key在>=(level+2)层中是否已经存在。
+// 主要用于key的type=deletion时，可不可以将该key删除掉。
 bool Compaction::IsBaseLevelForKey(const Slice& user_key) {
   // Maybe use binary search to find right entry instead of linear search?
   const Comparator* user_cmp = input_version_->vset_->icmp_.user_comparator();
@@ -1700,7 +1710,9 @@ bool Compaction::IsBaseLevelForKey(const Slice& user_key) {
   }
   return true;
 }
-
+//为了避免level层合并到level+1层后，
+//造成level+1层合并到level+2层重叠过多以造成过高的压缩成本最终导致下次合并的时候时间太久，
+//需要及时停止输出，并生成新的sst
 bool Compaction::ShouldStopBefore(const Slice& internal_key) {
   const VersionSet* vset = input_version_->vset_;
   // Scan to find earliest grandparent file that contains key.
@@ -1709,6 +1721,7 @@ bool Compaction::ShouldStopBefore(const Slice& internal_key) {
          icmp->Compare(internal_key,
                        grandparents_[grandparent_index_]->largest.Encode()) >
              0) {
+               //如果是一个key，无需处理。
     if (seen_key_) {
       overlapped_bytes_ += grandparents_[grandparent_index_]->file_size;
     }

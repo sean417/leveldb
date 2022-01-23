@@ -343,23 +343,28 @@ class Compaction {
 
   // Return the level that is being compacted.  Inputs from "level"
   // and "level+1" will be merged to produce a set of "level+1" files.
+  // 返回要压缩的level文件。
   int level() const { return level_; }
 
   // Return the object that holds the edits to the descriptor done
   // by this compaction.
   VersionEdit* edit() { return &edit_; }
 
-  // "which" must be either 0 or 1
+  // "which" must be either 0 or 1 
+  // 返回对应level参与压缩的文件数量。
   int num_input_files(int which) const { return inputs_[which].size(); }
 
   // Return the ith input file at "level()+which" ("which" must be 0 or 1).
+  // 获取某个level第i个sst文件。
   FileMetaData* input(int which, int i) const { return inputs_[which][i]; }
 
   // Maximum size of files to build during this compaction.
+  // 压缩产生的最大文件的大小
   uint64_t MaxOutputFileSize() const { return max_output_file_size_; }
 
   // Is this a trivial compaction that can be implemented by just
   // moving a single input file to the next level (no merging or splitting)
+  // 表示本次是否可以将本次SST直接移动到上一层。
   bool IsTrivialMove() const;
 
   // Add all inputs to this compaction as delete operations to *edit.
