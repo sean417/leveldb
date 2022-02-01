@@ -18,7 +18,7 @@ void PutFixed64(std::string* dst, uint64_t value) {
   dst->append(buf, sizeof(buf));
 }
 
-//变长存储
+//变长存储  
 char* EncodeVarint32(char* dst, uint32_t v) {
   // Operate on characters as unsigneds
   uint8_t* ptr = reinterpret_cast<uint8_t*>(dst);
@@ -86,6 +86,10 @@ int VarintLength(uint64_t v) {
 
 const char* GetVarint32PtrFallback(const char* p, const char* limit,
                                    uint32_t* value) {
+  /*
+    对于超过一个字节的长度编码，解码的过程就是按小端顺序，
+    每7位取出，然后移位来组装最后的实际长度，组装结束的表示就是MSB位为0
+  */                                   
   uint32_t result = 0;
   for (uint32_t shift = 0; shift <= 28 && p < limit; shift += 7) {
     uint32_t byte = *(reinterpret_cast<const uint8_t*>(p));
@@ -102,6 +106,7 @@ const char* GetVarint32PtrFallback(const char* p, const char* limit,
   return nullptr;
 }
 
+// 解码就是编码的逆过程，这里涉及到对Slice数据的解析
 bool GetVarint32(Slice* input, uint32_t* value) {
   const char* p = input->data();
   const char* limit = p + input->size();

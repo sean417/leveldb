@@ -110,6 +110,11 @@ inline const char* GetVarint32Ptr(const char* p, const char* limit,
   if (p < limit) {
     uint32_t result = *(reinterpret_cast<const uint8_t*>(p));
     if ((result & 128) == 0) {
+      /*
+        128就是一个八位，最高位为1，其余位为0,
+        与128相与为0表示待解码的result<=127，所以长度就是一个字节
+        直接赋值给*Value即可。
+      */
       *value = result;
       return p + 1;
     }

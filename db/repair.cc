@@ -68,10 +68,14 @@ class Repairer {
   }
 
   Status Run() {
+    //第一步：从db目录下，读取log/sst文件/manifest文件
     Status status = FindFiles();
     if (status.ok()) {
+      //第二步：将内部还没来的及dump磁盘的数据，从wal恢复生产sst。
       ConvertLogFilesToTables();
+      //第三步：提取新的sst的元数据
       ExtractMetaData();
+      //第四步：提取到元数据后，作为新的版本写到menifest里面
       status = WriteDescriptor();
     }
     if (status.ok()) {
@@ -94,7 +98,7 @@ class Repairer {
     FileMetaData meta;
     SequenceNumber max_sequence;
   };
-
+  //从db目录下，读取log/sst文件/manifest文件
   Status FindFiles() {
     std::vector<std::string> filenames;
     Status status = env_->GetChildren(dbname_, &filenames);
@@ -109,12 +113,14 @@ class Repairer {
     FileType type;
     for (size_t i = 0; i < filenames.size(); i++) {
       if (ParseFileName(filenames[i], &number, &type)) {
+        //取manifest。
         if (type == kDescriptorFile) {
           manifests_.push_back(filenames[i]);
         } else {
           if (number + 1 > next_file_number_) {
             next_file_number_ = number + 1;
           }
+          //取日志。
           if (type == kLogFile) {
             logs_.push_back(number);
           } else if (type == kTableFile) {
@@ -127,10 +133,11 @@ class Repairer {
     }
     return status;
   }
-
+  //将内部还没来的及dump磁盘的数据，从wal恢复生产sst。
   void ConvertLogFilesToTables() {
     for (size_t i = 0; i < logs_.size(); i++) {
       std::string logname = LogFileName(dbname_, logs_[i]);
+      // 把wal 的某个log转换为 sst
       Status status = ConvertLogToTable(logs_[i]);
       if (!status.ok()) {
         Log(options_.info_log, "Log #%llu: ignoring conversion error: %s",
@@ -139,7 +146,7 @@ class Repairer {
       ArchiveFile(logname);
     }
   }
-
+//将内部还没来的及dump磁盘的数据，从wal恢复生产sst。
   Status ConvertLogToTable(uint64_t log) {
     struct LogReporter : public log::Reader::Reporter {
       Env* env;
@@ -187,6 +194,7 @@ class Repairer {
         continue;
       }
       WriteBatchInternal::SetContents(&batch, record);
+      //构建sst
       status = WriteBatchInternal::InsertInto(&batch, mem);
       if (status.ok()) {
         counter += WriteBatchInternal::Count(&batch);
@@ -217,7 +225,7 @@ class Repairer {
         status.ToString().c_str());
     return status;
   }
-
+  //提取新的sst的元数据
   void ExtractMetaData() {
     for (size_t i = 0; i < table_numbers_.size(); i++) {
       ScanTable(table_numbers_[i]);
@@ -231,12 +239,15 @@ class Repairer {
     r.verify_checksums = options_.paranoid_checks;
     return table_cache_->NewIterator(r, meta.number, meta.file_size);
   }
-
+  //提取新的sst的元数据
   void ScanTable(uint64_t number) {
     TableInfo t;
     t.meta.number = number;
+    // 生成sst的名字
     std::string fname = TableFileName(dbname_, number);
+    // 获取对应sst的大小
     Status status = env_->GetFileSize(fname, &t.meta.file_size);
+    
     if (!status.ok()) {
       // Try alternate file name.
       fname = SSTTableFileName(dbname_, number);
@@ -245,6 +256,7 @@ class Repairer {
         status = Status::OK();
       }
     }
+    // 有可能添加了 /lost 路径，所以需要在检查下
     if (!status.ok()) {
       ArchiveFile(TableFileName(dbname_, number));
       ArchiveFile(SSTTableFileName(dbname_, number));
@@ -268,6 +280,7 @@ class Repairer {
       }
 
       counter++;
+      // 为每个sst生成最小最大的key和seq_num。
       if (empty) {
         empty = false;
         t.meta.smallest.DecodeFrom(key);
@@ -283,14 +296,14 @@ class Repairer {
     delete iter;
     Log(options_.info_log, "Table #%llu: %d entries %s",
         (unsigned long long)t.meta.number, counter, status.ToString().c_str());
-
+    
     if (status.ok()) {
       tables_.push_back(t);
     } else {
       RepairTable(fname, t);  // RepairTable archives input file.
     }
   }
-
+  //重建sst文件，删掉老的sst文件
   void RepairTable(const std::string& src, TableInfo t) {
     // We will copy src contents to a new table and then rename the
     // new table over the source.
@@ -389,7 +402,7 @@ class Repairer {
     if (!status.ok()) {
       env_->RemoveFile(tmp);
     } else {
-      // Discard older manifests
+      // Discard older manifests  删除老的 manifest 文件。
       for (size_t i = 0; i < manifests_.size(); i++) {
         ArchiveFile(dbname_ + "/" + manifests_[i]);
       }
@@ -424,26 +437,35 @@ class Repairer {
     Log(options_.info_log, "Archiving %s: %s\n", fname.c_str(),
         s.ToString().c_str());
   }
-
+  // db名字
   const std::string dbname_;
   Env* const env_;
   InternalKeyComparator const icmp_;
   InternalFilterPolicy const ipolicy_;
   const Options options_;
+  // info日志是否开启
   bool owns_info_log_;
+  // 是否打开block缓存。
   bool owns_cache_;
+  // table缓存
   TableCache* table_cache_;
+  // 用于做恢复的
   VersionEdit edit_;
-
+  // manifest文件
   std::vector<std::string> manifests_;
+  // sst文件编号
   std::vector<uint64_t> table_numbers_;
+  // 日志编号
   std::vector<uint64_t> logs_;
+  // sst文件元数据
   std::vector<TableInfo> tables_;
+  // 新的下一个最大的文件编号
   uint64_t next_file_number_;
 };
 }  // namespace
 
 Status RepairDB(const std::string& dbname, const Options& options) {
+  // 构建repair对象，恢复db
   Repairer repairer(dbname, options);
   return repairer.Run();
 }

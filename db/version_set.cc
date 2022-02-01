@@ -321,10 +321,10 @@ void Version::ForEachOverlapping(Slice user_key, Slice internal_key, void* arg,
 
   // Search level-0 in order from newest to oldest. 
   // level=0的sst
-  // 从最新到最老进行搜索，所以会先搜索第0层
+  // 第一步：从最新到最老进行搜索，所以会先搜索第0层
   std::vector<FileMetaData*> tmp;
   tmp.reserve(files_[0].size());
-  //第0层有overlap的先把他记录下来
+  //1.1 第0层有overlap的sst先把他记录下来
   for (uint32_t i = 0; i < files_[0].size(); i++) {
     FileMetaData* f = files_[0][i];
     if (ucmp->Compare(user_key, f->smallest.user_key()) >= 0 &&
@@ -332,7 +332,7 @@ void Version::ForEachOverlapping(Slice user_key, Slice internal_key, void* arg,
       tmp.push_back(f);
     }
   }
-  // 第0层多个sst直接可能重叠，所以需要按照sst文件的序号来排序，文件号越大，
+  // 1.2 第0层多个sst直接可能重叠，所以需要按照sst文件的序号来排序，文件号越大，
   // 表示数据越新，由于这层的sst文件对于key有重叠,所以
   if (!tmp.empty()) {
     std::sort(tmp.begin(), tmp.end(), NewestFirst);
@@ -344,13 +344,13 @@ void Version::ForEachOverlapping(Slice user_key, Slice internal_key, void* arg,
     }
   }
   // Search other levels.
-  // level>0的sst
+  // 第二步：去level>0的sst查找。
   for (int level = 1; level < config::kNumLevels; level++) {
     size_t num_files = files_[level].size();
     if (num_files == 0) continue;
 
     // Binary search to find earliest index whose largest key >= internal_key.
-    // 同层的level>0的sst之间的key直接没有重叠，这样就可以用二分查找来定位key了。
+    // 2.1 同层的level>0的sst之间的key直接没有重叠，这样就可以用二分查找来定位key所在的sst。
     uint32_t index = FindFile(vset_->icmp_, files_[level], internal_key);
     if (index < num_files) {
       FileMetaData* f = files_[level][index];
@@ -381,7 +381,7 @@ Status Version::Get(const ReadOptions& options, const LookupKey& k,
     VersionSet* vset;
     Status s;
     bool found;
-    //用来匹配key的函数。
+    //用来查找key的函数。
     static bool Match(void* arg, int level, FileMetaData* f) {
       State* state = reinterpret_cast<State*>(arg);
       // 如果该函数多次执行，说明会触发seek compaction,这里，我们只需要记录第一个就行了
@@ -394,7 +394,7 @@ Status Version::Get(const ReadOptions& options, const LookupKey& k,
 
       state->last_file_read = f;
       state->last_file_read_level = level;
-
+      //先去table_cache_找,找不到到磁盘找，找到后放缓存。
       state->s = state->vset->table_cache_->Get(*state->options, f->number,
                                                 f->file_size, state->ikey,
                                                 &state->saver, SaveValue);
@@ -469,6 +469,7 @@ bool Version::RecordReadSample(Slice internal_key) {
 
     static bool Match(void* arg, int level, FileMetaData* f) {
       State* state = reinterpret_cast<State*>(arg);
+      //匹配次数加一
       state->matches++;
       //记录第一个文件，因为如果 matches++ 了，说明第一个文件肯定被访问且key不在其中。
       if (state->matches == 1) {
@@ -1387,7 +1388,9 @@ Iterator* VersionSet::MakeInputIterator(Compaction* c) {
   delete[] list;
   return result;
 }
-//选择哪种压缩方式,以及选择哪些文件压缩
+//根据系统条件自动生成Compaction:选择哪种压缩方式,以及选择哪些文件压缩
+//选取一层需要compact的文件列表，及相关的下层文件列表，
+//记录在Compaction*返回
 Compaction* VersionSet::PickCompaction() {
   Compaction* c;
   int level;
@@ -1449,6 +1452,8 @@ Compaction* VersionSet::PickCompaction() {
     assert(!c->inputs_[0].empty());
   }
   // 非0层的sst获取。
+  //此时input[0]记录了level层需要Compact的文件，
+  //交由SetupOtherInputs()去填充input[1]和更新input[0]
   SetupOtherInputs(c);
 
   return c;
@@ -1532,7 +1537,24 @@ void AddBoundaryInputs(const InternalKeyComparator& icmp,
     }
   }
 }
+/*
+  //压缩基本思想是：所有重叠的level + 1层文件都要参与compact，得到这些文件后
+  //反过来看下，如果在不增加level + 1 层文件的前提下，看能否增加level层的文件。
+  //也就是在不增加 level + 1 层文件，同时不会导致 compact 的文件过大的前提下，
+  //尽量增加 level 层的文件数。
+  //处理流程如下：
+  //1、利用inputs_[0]和inputs_[1]两个范围内key的最大值all_limit和最小值all_start
+  //   去level层查询出有重叠的文件，并加入到expanded0中。
+  //2、调用AddBoundaryInputs()找出边界文件并一起compact。
+  //3、如果新查询出的文件个数expanded0.size() > input_[0].size(),
+  //   且inputs1_[1]层的文件大小inputs1_size + expanded0_size < ExpandedCompactionByteSizeLimit()
+  //   (目的是压缩文件数据大小不能太大而导致压缩压力。)
+  //4、如果流程3的条件满足，且根据expanded0获取到的新的key值范围new_start和new_limit
+  //   去level + 1 层去查询重叠的文件。
+  //5、若4查询出的重叠文件和之前inputs_[1]层的重叠文件个数一样。也就是说在
+  //   level+1层文件个数未变前提下，尽量增加level层文件个数进行压缩。
 
+*/
 void VersionSet::SetupOtherInputs(Compaction* c) {
   //第一步：为避免压缩之后文件，引发bug，需要扩展SST上限
   const int level = c->level();
@@ -1590,6 +1612,12 @@ void VersionSet::SetupOtherInputs(Compaction* c) {
       }
     }
   }
+ // 获取出level+2层与压缩后的level+1层(这里指的是level 与level+1合并压缩放入
+  //到level+1中的文件，不包括level+1的所有)有重叠的文件放入到grandparents_,
+  // 作用就是当合并level+1与level+2时，根据grandparents_中的记录可进行提前结束，
+  // 不至于合并压力太大。（不是停止合并，后文的压缩是停止当前的SSTable压缩，新生成一个新的SSTable进行压缩）
+  // Compute the set of grandparent files that overlap this compaction
+  // (parent == level+1; grandparent == level+2)
 
   // Compute the set of grandparent files that overlap this compaction
   // (parent == level+1; grandparent == level+2)
@@ -1607,7 +1635,7 @@ void VersionSet::SetupOtherInputs(Compaction* c) {
   compact_pointer_[level] = largest.Encode().ToString();
   c->edit_.SetCompactPointer(level, largest);
 }
-//用来手动触发压缩
+//用来手动触发压缩,//在指定层level中，根据指定的范围(begin,end)，找到待压缩文件并返回一个压缩实体。
 Compaction* VersionSet::CompactRange(int level, const InternalKey* begin,
                                      const InternalKey* end) {
   std::vector<FileMetaData*> inputs;
@@ -1621,8 +1649,16 @@ Compaction* VersionSet::CompactRange(int level, const InternalKey* begin,
   // But we cannot do this for level-0 since level-0 files can overlap
   // and we must not pick one file and drop another older file if the
   // two files overlap.
+  // 手动指定Compaction的生成一般用在性能测试中，正常系统运行过程中是不会调用的。
+  // 在指定层level中，根据指定的范围(begin,end)，找到待压缩文件并返回一个压缩实体。
   // 需要避免在一次操作中要参与压缩的文件太多
   // 但是针对第0层我们不会处理，因为第0层文件之间允许重叠，所有会选多个。
+  //1、对于大于0层的level，由于range范围过大导致压缩数据太多，
+  //   所以这里进行了大小控制，当一层中的前几个文件大小已超过
+  //   阈值，则在此个数文件基础上再多加一个文件，剩余后面的文件
+  //   直接丢弃不进行压缩。
+  //2、对于level0层的文件则不受用，因为文件直接可重叠的，不能压缩一部分，
+  //   另外重叠的部分不压缩，这样会有问题的。所以只能全部压缩。
   if (level > 0) {
     const uint64_t limit = MaxFileSizeForLevel(options_, level);
     uint64_t total = 0;
@@ -1661,7 +1697,27 @@ Compaction::~Compaction() {
     input_version_->Unref();
   }
 }
-//表示本次是否可以将本次SST直接移动到上一层，level层的文件直接move到level+1层。
+
+/*
+//
+通过方法IsTrivialMove()来判断是不是可以简单的移动文件到下一层
+表示本次是否可以将本次SST直接移动到上一层，level层的文件直接move到level+1层。
+01移动Compact
+即简单的移动文件到下一层来达到合并文件的效果。
+
+满足此流程的条件如下：
+
+非手动Compact;
+待Compact的level层只有一个文件，level+1层没文件且grandparents层总的文件大小未超过阈值MaxGrandParentOverlapBytes()。
+
+//通过方法IsTrivialMove()来判断是不是可以简单的移动文件到下一层
+//来达到合并文件的效果。但是又要避免因将文件移动到下一层导致与
+//下下一层即grandparent层有太多的重叠数据进而导致compact下一层时
+//压力太大。
+//判断是否可行的方法如下:
+//1、inputs_[0]层只有一个文件、inputs_[1]层没文件。
+//2、grandparents层总的文件大小未超过阈值MaxGrandParentOverlapBytes()。
+*/
 bool Compaction::IsTrivialMove() const {
   const VersionSet* vset = input_version_->vset_;
   // Avoid a move if there is lots of overlapping grandparent data.

@@ -16,8 +16,15 @@
 #include "util/logging.h"
 
 namespace leveldb {
+  /*
+data_是block首地址，size_是block的大小。
+ 一个block由block-data、block-restart、block-numRestart
+ 三部分组成，numRestart占用4个字节，所以这里要求出numRestart
+ 个数，就是直接解码最后是个字节。
+  */
 
 inline uint32_t Block::NumRestarts() const {
+  // numRestart是uint32_t表示，所以至少这么大
   assert(size_ >= sizeof(uint32_t));
   return DecodeFixed32(data_ + size_ - sizeof(uint32_t));
 }
@@ -25,35 +32,41 @@ inline uint32_t Block::NumRestarts() const {
   block的作用：
   1.保存BlockContents转换后的数据，存储在cache中。
   2.由于sst中存储的block都在多个item(类似一个vector),因此需要一个迭代器来遍历。
+
+  这里的BlockContents中的data就是由BlockBuilder生成的Block格式数据。
+  heap_allocated表示是否由使用BlockContents的调用者来释放内存。
 */
 Block::Block(const BlockContents& contents)
     : data_(contents.data.data()),
       size_(contents.data.size()),
       owned_(contents.heap_allocated) {
+  //1、numRestart都是一个uint32_t大小了，所以size_ 都小于一个4字节单元那就是异常了，命size_ = 0
   if (size_ < sizeof(uint32_t)) {
     size_ = 0;  // Error marker
   } else {
-    // 最后一个保存的是restart总个数，因此最多保留的 restart 个数（剩余所有的都是restarts offset）
-    
+    /* 最后一个保存的是restart总个数，因此最多保留的 restart 个数（剩余所有的都是restarts offset）
+       每个restart[]都是一个uint32_t类型，减去一个uint32_t大小的numRestart大小，估算出restart[]最大个数，如果已存在的numRestart都大于这个
+       最大值，则认为是异常的，命size_ 为0
+    */
     size_t max_restarts_allowed = (size_ - sizeof(uint32_t)) / sizeof(uint32_t);
     // 与restarts中restart的个数相比较。
     if (NumRestarts() > max_restarts_allowed) {
       // The size is too small for NumRestarts()
       size_ = 0;
     } else {
-      //反解析出数据部分的长度。
+      //反解析出数据部分的长度。计算出restart[]在整个block中的偏移位offset.
       restart_offset_ = size_ - (1 + NumRestarts()) * sizeof(uint32_t);
     }
   }
 }
-
+// 析构时判断下是否要删除Block
 Block::~Block() {
   if (owned_) {
     delete[] data_;
   }
 }
 
-// Helper routine: decode the next block entry starting at "p",
+/* Helper routine: decode the next block entry starting at "p",
 // storing the number of shared key bytes, non_shared key bytes,
 // and the length of the value in "*shared", "*non_shared", and
 // "*value_length", respectively.  Will not dereference past "limit".
@@ -61,6 +74,14 @@ Block::~Block() {
 // If any errors are detected, returns nullptr.  Otherwise, returns a
 // pointer to the key delta (just past the three decoded values).
 // 如何读取前缀存储法存储的key：
+先看一个Entry的结构：
+_____________________________________________________________
+| *shared | *non_shared | *value_length | key_delta | value |
+_____________________________________________________________
+其中*shared、*non_shared、*value_length这三个都是varint32编码，
+每个字段最少占用一个字节。
+由上面的结构说明之后，看下面的解析很清楚了。
+*/
 static inline const char* DecodeEntry(const char* p, const char* limit,
                                       uint32_t* shared, uint32_t* non_shared,
                                       uint32_t* value_length) {
@@ -76,41 +97,58 @@ static inline const char* DecodeEntry(const char* p, const char* limit,
     if ((p = GetVarint32Ptr(p, limit, non_shared)) == nullptr) return nullptr;
     if ((p = GetVarint32Ptr(p, limit, value_length)) == nullptr) return nullptr;
   }
-
+/*
+    p此时指向key_delta，limit指向重启点的起始处，所有二者的距离
+    至少能容下一个key_delta + Value的大小。否则异常。
+*/
   if (static_cast<uint32_t>(limit - p) < (*non_shared + *value_length)) {
     return nullptr;
   }
   return p;
 }
-
+// 这个创建一个遍历Block的迭代器，Block中每个K-V就是一个Entry
 class Block::Iter : public Iterator {
  private:
+  //KV比较器
   const Comparator* const comparator_;
+  //Block首地址
   const char* const data_;       // underlying block contents
+  //restart[]数组在Block中的偏移首地址
   uint32_t const restarts_;      // Offset of restart array (list of fixed32)
+  //restart点的个数
   uint32_t const num_restarts_;  // Number of uint32_t entries in restart array
 
   // current_ is offset in data_ of current entry.  >= restarts_ if !Valid
+  // 当前指向的Entry在Block中的偏移
   uint32_t current_;
+  // 表示当前restart所在restart[]中的index
   uint32_t restart_index_;  // Index of restart block in which current_ falls
+  // 当前current_对应的KV
   std::string key_;
+  /*
+   这个Value有多个用途:
+   1、当前key对应的value，
+   2、指向当前Entry的一个指针
+  */
   Slice value_;
+  // 操作状态记录
   Status status_;
-
+  // 比较两个K大小，a > b则返回>0, a<b则返回<0, a=b则返回=0
   inline int Compare(const Slice& a, const Slice& b) const {
     return comparator_->Compare(a, b);
   }
 
   // Return the offset in data_ just past the end of the current entry.
+  // 指向下一个Entry
   inline uint32_t NextEntryOffset() const {
     return (value_.data() + value_.size()) - data_;
   }
-
+  // 解码返回索引为index的restart的值 
   uint32_t GetRestartPoint(uint32_t index) {
     assert(index < num_restarts_);
     return DecodeFixed32(data_ + restarts_ + index * sizeof(uint32_t));
   }
-
+  // 跳到index对应的restart所指向的值，同时要将当前key和value都置位
   void SeekToRestartPoint(uint32_t index) {
     key_.clear();
     restart_index_ = index;
@@ -120,7 +158,16 @@ class Block::Iter : public Iterator {
     uint32_t offset = GetRestartPoint(index);
     value_ = Slice(data_ + offset, 0);
   }
+/*
+构造一个迭代器：
+   1、指定比对器comparator_;
+   2、指定迭代器所指向的基地址data_；
+   3、Block中重启点的偏移restarts_；
+   4、重启点的个数num_restarts_;
+   5、当前key在Block中的偏移默认为restart_;
+   6、当前重启点的索引默认为最后一个即num_restarts_。
 
+*/
  public:
   Iter(const Comparator* comparator, const char* data, uint32_t restarts,
        uint32_t num_restarts)
@@ -132,29 +179,46 @@ class Block::Iter : public Iterator {
         restart_index_(num_restarts_) {
     assert(num_restarts_ > 0);
   }
-
+   /*
+   当前key的偏移current_要小于重启点的偏移restarts_才是合法的，
+   虽然构造迭代器Iter的时候赋值为相等，当后续使用时应该会处理。
+   */
   bool Valid() const override { return current_ < restarts_; }
   Status status() const override { return status_; }
+  // 获取当前key，当要进行合法性判断
   Slice key() const override {
     assert(Valid());
     return key_;
   }
+  // Value值
   Slice value() const override {
     assert(Valid());
     return value_;
   }
-
+  // Next key，由ParseNextKey负责实现
   void Next() override {
     assert(Valid());
     ParseNextKey();
   }
+  /*
+    指向前一个节点，大体思路如下：
+   1、先找到一个重启点，这个重启点指向的entry对应的offset小于当前的key的偏移current_。
+   2、跳到重启点指向的Entry。
+   3、然后在当前指向的entry循环向下遍历，找到当前current_前一个偏移Entry。
 
+  */
   void Prev() override {
     assert(Valid());
 
     // Scan backwards to a restart point before current_
     const uint32_t original = current_;
     while (GetRestartPoint(restart_index_) >= original) {
+      /*
+        如果重启点指向的 entry 还是 >= 当前的 Entry 偏移，
+        同时重启点的索引已经为0，表明前面以无 Entry，
+        当前 Entry 就是第一个 Entry ，这里就把 current_ 和
+        restart_index 重新置位。
+      */
       if (restart_index_ == 0) {
         // No more entries
         current_ = restarts_;
@@ -163,13 +227,26 @@ class Block::Iter : public Iterator {
       }
       restart_index_--;
     }
-
+    /*
+      这里就是循环解析，直到找到当前Entry的前一个Entry，
+      ParseNextKey解析出下一个Key-Value，NextEntryOffset在
+      已解析出来的KV基础上通过Value addr + Value Size来进一步
+      判断下一个Entry是否就是original所指向的entry。
+    */
     SeekToRestartPoint(restart_index_);
     do {
       // Loop until end of current entry hits the start of original entry
     } while (ParseNextKey() && NextEntryOffset() < original);
   }
-  //二分查找指定的key.
+  /*
+   二分查找指定的key.
+   Seek到Block中大于等于target的Entry，实现方式如下：
+   1、先通过二分法在Block的restart[]数组中找到最近的
+      一个restart重启点，这个重启点指向的key < target。
+   2、然后从这个restart重启点指向的key向下遍历，找到
+      大于等于target的Entry。  
+
+  */
   void Seek(const Slice& target) override {
     // Binary search in restart array to find the last restart point
     // with a key < target
@@ -192,13 +269,20 @@ class Block::Iter : public Iterator {
         return;
       }
     }
-    // 二分查找法
+    /*二分查找法
+      这里判断left >= right就跳出循环，
+      然后沿着left指向的值往下寻找。
+    */
     while (left < right) {
       uint32_t mid = (left + right + 1) / 2;
       // 获取对应的重启点的位置
       uint32_t region_offset = GetRestartPoint(mid);
       uint32_t shared, non_shared, value_length;
-      // 解析出来的是非共享部分
+      /*解析出来的是非共享部分
+        解码出restart指向的Entry的key值，且值不为空，
+        另外restart指向的key值是不共享的，也就是说shared值为0，
+        所以如果二者都不满足，则报错。
+      */
       const char* key_ptr =
           DecodeEntry(data_ + region_offset, data_ + restarts_, &shared,
                       &non_shared, &value_length);
@@ -206,6 +290,15 @@ class Block::Iter : public Iterator {
         CorruptionError();
         return;
       }
+      /*
+        1、如果解码出的restart指向的key值小于target，但这个restart
+           接下来的数据是有可能>=target的，所以left = mid，然后继续查找。
+        2、如果解码出的restart指向的key值大于等于target，那这个restart
+           后续的的值肯定都是大于等于target的，所以就直接跳过这个mid指向
+           的值，将mid - 1 赋值与rigth，然后继续查找。          
+      */
+
+
       Slice mid_key(key_ptr, non_shared);
       //比较两个key的大小
       if (Compare(mid_key, target) < 0) {
@@ -255,6 +348,12 @@ class Block::Iter : public Iterator {
   }
 
  private:
+  /*
+   解析到错误的entry所要执行的动作。
+   好像所有的流程，只有解析异常了都会
+   将current_指向restart[]起始处，
+   restart_index为num_restarts_  
+  */
   void CorruptionError() {
     current_ = restarts_;
     restart_index_ = num_restarts_;
@@ -262,11 +361,16 @@ class Block::Iter : public Iterator {
     key_.clear();
     value_.clear();
   }
-
+  // 解析下一个Key
   bool ParseNextKey() {
+    // 1、求出下一个Key的offset
     current_ = NextEntryOffset();
+    // 2、计算出实际的地址
     const char* p = data_ + current_;
+    //3、计算出重启点数组的实际地址
     const char* limit = data_ + restarts_;  // Restarts come right after data
+    //如果Entry地址>=limit这地址，表示已经无entry数据了，
+    //返回false状态。
     if (p >= limit) {
       // No more entries to return.  Mark as invalid.
       current_ = restarts_;
@@ -274,7 +378,7 @@ class Block::Iter : public Iterator {
       return false;
     }
 
-    // Decode next entry
+    // Decode next entry 5、解析出下一个Entry值，并查询出其结构的各个值
     uint32_t shared, non_shared, value_length;
     p = DecodeEntry(p, limit, &shared, &non_shared, &value_length);
     if (p == nullptr || key_.size() < shared) {
@@ -284,6 +388,17 @@ class Block::Iter : public Iterator {
       key_.resize(shared);
       key_.append(p, non_shared);
       value_ = Slice(p + non_shared, value_length);
+
+      /*
+        如果当前current_的偏移已经大于其对应重启点的下一个重启点所指向
+        的偏移位，则表示current_已不在当前重启点范围内了，所以需要将
+        当前current_重启点索引后移为下一个。个人感觉这里应该是为了解决
+        偏移的下一个Entry已跨到下一个重启点范围了，所以需要重新更新下
+        当前current_的重启点索引，但是这里用的判断条件是< current_,
+        也就是说当跨到下一个重启点指向的第一个Entry，不会立马更新current_当前索引，
+        需要跨到下一个重启点的第二个Entry才会更新这个index。
+        不知道为什么不直接改成<=current_判断。
+      */
       while (restart_index_ + 1 < num_restarts_ &&
              GetRestartPoint(restart_index_ + 1) < current_) {
         ++restart_index_;
@@ -292,7 +407,7 @@ class Block::Iter : public Iterator {
     }
   }
 };
-
+// 这就是新建一个迭代器，并做一些异常检测
 Iterator* Block::NewIterator(const Comparator* comparator) {
   if (size_ < sizeof(uint32_t)) {
     return NewErrorIterator(Status::Corruption("bad block contents"));
@@ -307,3 +422,11 @@ Iterator* Block::NewIterator(const Comparator* comparator) {
 }
 
 }  // namespace leveldb
+/*
+压缩率： 因为用户存储的key，一般都是按一定规则来的，所以前后key肯定有相同的部分，
+所以通过设置重启点间隔，相对于对key进行压缩，减少存储的数据。
+数据损坏： 但是有一点要注意，如果重启点指向的key损坏了，则接下来的key（直至下一个重启点），都是无法解析的，即数据是损坏的。所以这里也是不建议使用者去改动，除非使用者能很好的控制。
+
+
+
+*/

@@ -43,7 +43,12 @@ class BlockBuilder {
   bool empty() const { return buffer_.empty(); }
 
  private:
-  //设置重启点等数据
+    /*设置重启点等数据:
+      写KV时的一些参数选项，主要用到了参数：
+      1、block_restart_interval（重启点间隔）；
+      2、comparator（KV比较）。
+
+    */
   const Options* options_;
   //序列化之后的数据
   std::string buffer_;              // Destination buffer

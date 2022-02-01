@@ -10,7 +10,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <vector>
-
+/*
+频繁的向系统申请内存是很容易造成内存碎片的，如果申请内存很小则更严重。leveldb针对这种小内存的临时频繁申请使用了Arena来解决。
+Arena只是粗粒度的内存管理，只用在了MemTable和skiplist中，是作为一个局部临时对象来使用并未用在全局，Arena的内部实现是存在内存浪费的。
+*/
 namespace leveldb {
 //内存池。对于基础组件来说只要是频繁创建和销毁内存的地方就有
 //内存池，leveldb也有，目的是避免频繁创建和销毁内存。
@@ -18,13 +21,14 @@ namespace leveldb {
 class Arena {
  public:
   Arena();
-
+  // 禁止拷贝构造，拷贝赋值操作。
   Arena(const Arena&) = delete;
   Arena& operator=(const Arena&) = delete;
   //析构函数，当Memtable结束生命周期时，析构函数会释放内存池
   ~Arena();
 
   // Return a pointer to a newly allocated memory block of "bytes" bytes.
+  // 申请bytes大小内存，并返回指向内存的指针
   char* Allocate(size_t bytes);
 
   // Allocate memory with the normal alignment guarantees provided by malloc.
@@ -37,7 +41,7 @@ class Arena {
   }
 
  private:
-  //按需的方式分配内存，可能会造成内存的浪费
+  //按需的方式分配内存，可能会造成内存的浪费  申请内存对齐的bytes大小内存，并返回指向内存的指针
   char* AllocateFallback(size_t bytes);
   //对其的方式分配内存，CPU在寻址的过程中是按偶数的方式寻址的，奇数要寻址两次。从而提升寻址性能
   char* AllocateNewBlock(size_t block_bytes);
@@ -58,7 +62,10 @@ class Arena {
   //               accessed without any locking. Is this OK?
   std::atomic<size_t> memory_usage_;
 };
-
+/*
+  申请内存实现，如果当前剩余的内存满足客端申请的就直接分配，
+  如果满足不了，就调用AllocateFallback向系统申请。
+*/
 inline char* Arena::Allocate(size_t bytes) {
   // The semantics of what to return are a bit messy if we allow
   // 0-byte allocations, so we disallow them here (we don't need

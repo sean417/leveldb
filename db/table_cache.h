@@ -32,7 +32,7 @@ class TableCache {
   // underlies the returned iterator.  The returned "*tableptr" object is owned
   // by the cache and should not be deleted, and is valid for as long as the
   // returned iterator is live.
-  // 因为SST本身也是可遍历的，所以它会对外提供一个Iter接口
+  // 因为SST本身也是可遍历的，所以它会对外提供一个 Iter 接口
   Iterator* NewIterator(const ReadOptions& options, uint64_t file_number,
                         uint64_t file_size, Table** tableptr = nullptr);
 
@@ -51,10 +51,10 @@ class TableCache {
  //查找指定的SSTable，优先去缓存找，找不到去磁盘读取，读取之后再插入到缓存中
   Status FindTable(uint64_t file_number, uint64_t file_size, Cache::Handle**);
 
-  Env* const env_;//跨平台变量，用于读取sst文件
-  const std::string dbname_;//sst文件的名字
-  const Options& options_;//Cache参数配置
-  Cache* cache_;//缓存基类句柄
+  Env* const env_;//跨平台变量，用于读取sst文件 //环境相关操作信息
+  const std::string dbname_;//sst文件的名字即ldb文件名称
+  const Options& options_;//Cache参数配置，用户已经系统设置的操作选择
+  Cache* cache_;//缓存基类句柄，用以缓存ldb的Cache
 };
 
 }  // namespace leveldb

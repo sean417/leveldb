@@ -399,11 +399,14 @@ class Compaction {
 
   // Each compaction reads inputs from "level_" and "level_+1"
   // level和level+1层参与压缩的文件集合
+  //inputs_[0] 为level-n的sstable文件信息。
+  //inputs_[1] 为level-n+1的sstable文件信息。
   std::vector<FileMetaData*> inputs_[2];  // The two sets of inputs
 
   // State used to check for number of overlapping grandparent files
   // (parent == level_ + 1, grandparent == level_ + 2)
   // grandparents元数据
+  // 用于存放level+2层与Compact完的level+1层存在overlap的SSTable文件集合。
   std::vector<FileMetaData*> grandparents_;
   // grandparents下表索引
   size_t grandparent_index_;  // Index in grandparent_starts_

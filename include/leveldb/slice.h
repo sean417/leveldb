@@ -6,11 +6,19 @@
 // storage and a size.  The user of a Slice must ensure that the slice
 // is not used after the corresponding external storage has been
 // deallocated.
-//
+
+
 // Multiple threads can invoke const methods on a Slice without
 // external synchronization, but if any of the threads may call a
 // non-const method, all threads accessing the same Slice must use
 // external synchronization.
+
+//leveldb内部没有使用string，而是使用了一个Slice数据结构来指向一块数据，每次给参数都给Slice而不用给数据的拷贝，
+// 这样就省去内存的拷贝。leveldb所涉及到KV操作的接口都是用的Slice。
+// Slice 是一个简单的结构，包括一个指向外部存储的指针和一个size。
+// 注意：
+// 1)Slice的使用者要保证在相关外部存储被释放后slice不能使用。
+// 2)如果是多线程调用同一个Slice的const方法，则不用关注多线程同步问题，如果是非const方法则由调用则保证多线程之间的同步；
 
 #ifndef STORAGE_LEVELDB_INCLUDE_SLICE_H_
 #define STORAGE_LEVELDB_INCLUDE_SLICE_H_

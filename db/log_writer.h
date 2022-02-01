@@ -22,6 +22,7 @@ class Writer {
   // Create a writer that will append data to "*dest".
   // "*dest" must be initially empty.
   // "*dest" must remain live while this Writer is in use.
+  // 实例化一个Writer，传入的参数*dest要为空，且在写期间，*dest要保持存活。
   explicit Writer(WritableFile* dest);
 
   // Create a writer that will append data to "*dest".
@@ -33,18 +34,21 @@ class Writer {
   Writer& operator=(const Writer&) = delete;
 
   ~Writer();
-
+  // 写一个Record到文件中
   Status AddRecord(const Slice& slice);
 
  private:
+  //实际写
   Status EmitPhysicalRecord(RecordType type, const char* ptr, size_t length);
-
+  //log文件
   WritableFile* dest_;
+  //位于当前block的哪个位置
   int block_offset_;  // Current offset in block
 
   // crc32c values for all supported record types.  These are
   // pre-computed to reduce the overhead of computing the crc of the
   // record type stored in the header.
+  // 提前计算好的Type对应的CRC值，减少使用过程中的计算
   uint32_t type_crc_[kMaxRecordType + 1];
 };
 

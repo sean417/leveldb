@@ -180,9 +180,9 @@ class DBImpl : public DB {
   // 表示db是否关闭。
   std::atomic<bool> shutting_down_;
   port::CondVar background_work_finished_signal_ GUARDED_BY(mutex_);
-  //活跃的memtable
+  //活跃的memtable,mem_可读可修改
   MemTable* mem_;
-  //不活跃的memtable
+  //不活跃的memtable,imm_是只读的，持久化到磁盘的就是imm_
   MemTable* imm_ GUARDED_BY(mutex_);  // Memtable being compacted
   // 表示是否已经有一个imm_,因为只需要一个线程压缩，也只会有一个imm。
   std::atomic<bool> has_imm_;         // So bg thread can detect non-null imm_

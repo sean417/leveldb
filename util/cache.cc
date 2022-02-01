@@ -411,6 +411,7 @@ class ShardedLRUCache : public Cache {
     }
   }
   ~ShardedLRUCache() override {}
+  // 把一个sst的缓存插入到table cache里
   Handle* Insert(const Slice& key, void* value, size_t charge,
                  void (*deleter)(const Slice& key, void* value)) override {
     //通过hash计算哪个分片

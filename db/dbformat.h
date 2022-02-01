@@ -66,13 +66,19 @@ enum ValueType { kTypeDeletion = 0x0, kTypeValue = 0x1 };
 // kValueTypeForSeek是一种sequence number，用来区分相同key数据的版本，也就是操作的新旧。
 static const ValueType kValueTypeForSeek = kTypeValue;
 
+/*
+	  占位56bit，最大值就是56个1的二进制。
+*/
 typedef uint64_t SequenceNumber;
 
 // We leave eight bits empty at the bottom so a type and sequence#
 // can be packed together into 64-bits.
 // 一个递增的uint64整数，相同key则按照其降序，7个字节存放真正的Sequence，最后一个字节存type
 static const SequenceNumber kMaxSequenceNumber = ((0x1ull << 56) - 1);
-//对InternalKey的解析，InternalKey是把数据序列化之后放在一个string里面的，需要解析
+/*对InternalKey的解析，InternalKey是把数据序列化之后放在一个string里面的，需要解析
+    InternalKey 结构，从这个结构可以看出InternalKey由
+	  user_Key、SequenceNumber、Value_Type三部分组成。
+*/
 struct ParsedInternalKey {
   //用户定义的key,如redis你要查name为James的值，就
   Slice user_key;
@@ -86,20 +92,28 @@ struct ParsedInternalKey {
 };
 
 // Return the length of the encoding of "key".
+// InternalKey的长度，8Byte是SequenceNumber(56Bit) + ValueType(8Bit)
 inline size_t InternalKeyEncodingLength(const ParsedInternalKey& key) {
   return key.user_key.size() + 8;
 }
 
 // Append the serialization of "key" to *result.
+// 将IntervalKey添加到result尾部
 void AppendInternalKey(std::string* result, const ParsedInternalKey& key);
 
 // Attempt to parse an internal key from "internal_key".  On success,
 // stores the parsed data in "*result", and returns true.
 //
 // On error, returns false, leaves "*result" in an undefined state.
+/*
+   尝试解析IntervalKey，
+	 1.解析成功就返回true，结果存在*result中;
+	 2.解析识别就返回false，*result则是未定义的。
+*/
 bool ParseInternalKey(const Slice& internal_key, ParsedInternalKey* result);
 
 // Returns the user key portion of an internal key.
+// 从 IntervalKey 中解析出用户key，即 user_Key 。
 inline Slice ExtractUserKey(const Slice& internal_key) {
   assert(internal_key.size() >= 8);
   return Slice(internal_key.data(), internal_key.size() - 8);
@@ -107,6 +121,7 @@ inline Slice ExtractUserKey(const Slice& internal_key) {
 
 // A comparator for internal keys that uses a specified comparator for
 // the user key portion and breaks ties by decreasing sequence number.
+// IntervalKey的比较类，内部是BytewiseComparator实现方式，即按字节比较
 class InternalKeyComparator : public Comparator {
  private:
   const Comparator* user_comparator_;
@@ -114,13 +129,21 @@ class InternalKeyComparator : public Comparator {
  public:
   explicit InternalKeyComparator(const Comparator* c) : user_comparator_(c) {}
   const char* Name() const override;
+  /*
+    比较两个Slice，
+		  a < b，返回值<0;
+		  a = b，返回值=0;
+		  a > b，返回值>0;
+  */
   int Compare(const Slice& a, const Slice& b) const override;
+  //  获得大于*start，但小于limit的最小值，值存在*start中返回
   void FindShortestSeparator(std::string* start,
                              const Slice& limit) const override;
+  // 获得大于*key的最小值，值存在*start中返回。
   void FindShortSuccessor(std::string* key) const override;
 
   const Comparator* user_comparator() const { return user_comparator_; }
-
+  // 比较两个 IntervalKey，返回值参照上面的compare
   int Compare(const InternalKey& a, const InternalKey& b) const;
 };
 
@@ -139,6 +162,8 @@ class InternalFilterPolicy : public FilterPolicy {
 // Modules in this directory should keep internal keys wrapped inside
 // the following class instead of plain strings so that we do not
 // incorrectly use string comparisons instead of an InternalKeyComparator.
+// InternalKey的封装，使用此封装可以避免使用字符串比较来代替IntervalKeyComparator。
+// 整个类看起来很清晰，我就不做过多注释了。
 class InternalKey {
  private:
   std::string rep_;
@@ -175,15 +200,21 @@ inline int InternalKeyComparator::Compare(const InternalKey& a,
                                           const InternalKey& b) const {
   return Compare(a.Encode(), b.Encode());
 }
-// InternalKey转ParseInternalKey
+// InternalKey转ParseInternalKey 解析出InternalKey存于*result中。
 inline bool ParseInternalKey(const Slice& internal_key,
                              ParsedInternalKey* result) {
   //总字节数
   const size_t n = internal_key.size();
   if (n < 8) return false;
+  // 以leveldb内部默认的小端方式解析出8Byte的SequenceNumber+ValueType
   uint64_t num = DecodeFixed64(internal_key.data() + n - 8);
-  //反编译出后8个字节数据，
-  //进行位运算计算出seq和type
+  /*反编译出后8个字节数据，
+  进行位运算计算出seq和type
+
+       1.获取ValueType;
+       2.右移8位获得SequenceNumber;
+       3.减去8Byte的Seq+ValueType，获得userKey。
+  */
   uint8_t c = num & 0xff;
   result->sequence = num >> 8;
   result->type = static_cast<ValueType>(c);
@@ -194,6 +225,16 @@ inline bool ParseInternalKey(const Slice& internal_key,
 
 // A helper class useful for DBImpl::Get()
 // 在查找中使用的key,包含的数据最全，包含user_key,internal_key,memtable_key。
+
+/*
+     以下是LookupKey的封装类，结构如下：
+        start_        kstart_                                        end_
+		  |             |              |                              |
+		  |<--klength-->|<--userkey--> |<--sequenceNumber+ValueType-->|
+		  
+       klength = userkey大小 + 8Byte的Seq + ValueType,
+       klength是Varint32编码，最多占用5Byte
+*/
 class LookupKey {
  public:
   // Initialize *this for looking up user_key at a snapshot with
@@ -230,7 +271,8 @@ class LookupKey {
   // 类似C++ 里 string的sso优化。
   char space_[200];  // Avoid allocation for short keys
 };
-
+//    如果二者地址不相等，说明start_的内存是new出来的，
+//	  所以要delete。
 inline LookupKey::~LookupKey() {
   if (start_ != space_) delete[] start_;
 }

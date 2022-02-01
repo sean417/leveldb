@@ -25,6 +25,8 @@ namespace leveldb {
 
 // WriteBatch header has an 8-byte sequence number followed by a 4-byte count.
 // WriteBatch的固定头部前8个是sequence number,后四个字节表示当前的batch有多少个key
+// 真正插入数据的时候还是要迭代 WriteBatch 里面的key,value的，为什么这么做呢？
+// 因为WriteBatch我们可以作为原子操作，还是提升了效率的。
 static const size_t kHeader = 12;
 
 WriteBatch::WriteBatch() { Clear(); }
@@ -121,6 +123,7 @@ void WriteBatch::Append(const WriteBatch& source) {
 }
 
 namespace {
+  //sst 处理插入操作的类。
 class MemTableInserter : public WriteBatch::Handler {
  public:
   SequenceNumber sequence_;
@@ -138,11 +141,12 @@ class MemTableInserter : public WriteBatch::Handler {
   }
 };
 }  // namespace
-
+//真正的把数据插入到sst。
 Status WriteBatchInternal::InsertInto(const WriteBatch* b, MemTable* memtable) {
   MemTableInserter inserter;
   inserter.sequence_ = WriteBatchInternal::Sequence(b);
   inserter.mem_ = memtable;
+  //最终利用迭代器插入
   return b->Iterate(&inserter);
 }
 

@@ -11,13 +11,13 @@
 #include "util/coding.h"
 
 namespace leveldb {
-
+// 打包sequenceNumber + VlaueType，这里就是将 seq 左移 8bit，存入ValueType
 static uint64_t PackSequenceAndType(uint64_t seq, ValueType t) {
   assert(seq <= kMaxSequenceNumber);
   assert(t <= kValueTypeForSeek);
   return (seq << 8) | t;
 }
-
+// 将InternalKey append到*result后面
 void AppendInternalKey(std::string* result, const ParsedInternalKey& key) {
   result->append(key.user_key.data(), key.user_key.size());
   PutFixed64(result, PackSequenceAndType(key.sequence, key.type));
@@ -43,7 +43,14 @@ std::string InternalKey::DebugString() const {
 const char* InternalKeyComparator::Name() const {
   return "leveldb.InternalKeyComparator";
 }
-
+/*
+    比较两个Slice封装的Internalkey:
+	  1.先提取二者的userKey进行比较；
+	  2.如果userKey是一样的，就比较8Byte的Seq+ValueType，
+	    seq+ValueType大的为小。因为sequenceNumber在leveldb
+	    全局递增，所以对于相同的userKey,最新的更新(sequenceNumber更大)
+	    排在前面，在查找的时候会被先找到。
+*/
 int InternalKeyComparator::Compare(const Slice& akey, const Slice& bkey) const {
   // Order by:
   //    increasing user key (according to user-supplied comparator)
@@ -61,7 +68,16 @@ int InternalKeyComparator::Compare(const Slice& akey, const Slice& bkey) const {
   }
   return r;
 }
-
+/*
+    获得大于*start，但小于limit的最小值，值存在*start中返回,
+	   流程不是太难理解，这里举几个例子：
+	   1.start("foo"),limit("foo")，未找到,start还是"foo"。
+	   2.start("foo"),limit(bar)，未找到,start还是"foo"。
+	   3.start("foo"),limit(hello)，找到,start返回"g"。	
+	   4.start("foo"),limit("foobar")，未找到,start还是"foo"。
+	   5.start("foobar"),limit("foo")，未找到,start还是"foobar"。
+	   这里忽略了ValueType比较，逻辑处理流程来看比较是不涉及到的。  
+*/
 void InternalKeyComparator::FindShortestSeparator(std::string* start,
                                                   const Slice& limit) const {
   // Attempt to shorten the user portion of the key
@@ -80,7 +96,14 @@ void InternalKeyComparator::FindShortestSeparator(std::string* start,
     start->swap(tmp);
   }
 }
-
+/*
+     获得大于*start的最小值，值存在*start中返回,
+	   流程不是太难理解，这里举几个例子：
+	   1.key("foo"),找到,start返回"g"。
+	   2.start("\xff\xff"),未找到,start还是"\xff\xff"。
+	   内部比较是遇到0xff直接不比较的。
+	   这里忽略了ValueType比较，逻辑处理流程来看比较是不涉及到的。 
+*/
 void InternalKeyComparator::FindShortSuccessor(std::string* key) const {
   Slice user_key = ExtractUserKey(*key);
   std::string tmp(user_key.data(), user_key.size());
@@ -116,6 +139,14 @@ bool InternalFilterPolicy::KeyMayMatch(const Slice& key, const Slice& f) const {
 
 LookupKey::LookupKey(const Slice& user_key, SequenceNumber s) {
   size_t usize = user_key.size();
+
+  /*LookupKey的构造，流程还是比较清晰的，这里的ValueType默认是最大即kTypeValue> 
+	  LookupKey::LookupKey(const Slice& user_key, SequenceNumber s) {
+	  size_t usize = user_key.size();
+	  内存大小预估，这里的13是 5 + 8，
+		5是因为klength是Varint32编码，最多5Byte，
+		8就是SequenceNumber + ValueType大小。	
+	  */
   size_t needed = usize + 13;  // A conservative estimate
   char* dst;
   if (needed <= sizeof(space_)) {
